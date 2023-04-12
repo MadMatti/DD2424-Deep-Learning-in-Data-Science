@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-data_dir = 'datasets/'
+data_dir = 'dataset/'
 
 N = 10000
 d = 3072
@@ -59,6 +59,11 @@ class Classifier():
         self.b1 = np.zeros((hidden_nodes, 1))
         self.b2 = np.zeros((K, 1))
 
+        self.gradW1 = np.zeros((hidden_nodes, d))
+        self.gradW2 = np.zeros((K, hidden_nodes))
+        self.gradb1 = np.zeros((hidden_nodes, 1))
+        self.gradb2 = np.zeros((K, 1))
+
         self.lambda_reg = regularization
 
         np.random.seed(42)
@@ -102,5 +107,106 @@ class Classifier():
         acc = np.sum(y_pred == y) / X.shape[1]
         return acc
 
+    def computeGradients(self, X, Y, P, W1, b1, W2, b2):
+        s1 = np.dot(W1, X) + b1
+        h = np.maximum(s1, 0)
+        G = -(Y - P)
+
+        self.gradb2 = np.sum(G, axis=1, keepdims=True) / X.shape[1]
+        self.gradW2 = np.dot(G, h.T) / X.shape[1] + 2 * self.lambda_reg * W2
+
+        s1 = np.where(s1 > 0, 1, 0)
+        G = np.dot(W2.T, G) * s1
+
+        self.gradb1 = np.sum(G, axis=1, keepdims=True) / X.shape[1]
+        self.gradW1 = np.dot(G, X.T) / X.shape[1] + 2 * self.lambda_reg * W1
+
+    def computeGradsNum(self, X, Y, W1, b1, W2, b2, h):
+        gradW1 = np.zeros(W1.shape)
+        gradb1 = np.zeros(b1.shape)
+        gradW2 = np.zeros(W2.shape)
+        gradb2 = np.zeros(b2.shape)
+
+        c = self.computeCost(X, Y, W1, b1, W2, b2)[0]
+
+        for i in range(len(b1)):
+            b1_try = np.array(b1)
+            b1_try[i] += h
+            c2 = self.computeCost(X, Y, W1, b1_try, W2, b2)[0]
+            gradb1[i] = (c2 - c) / h
+
+        for i in range(W1.shape[0]):
+            for j in range(W1.shape[1]):
+                W1_try = np.array(W1)
+                W1_try[i, j] += h
+                c2 = self.computeCost(X, Y, W1_try, b1, W2, b2)[0]
+                gradW1[i, j] = (c2 - c) / h
+
+        for i in range(len(b2)):
+            b2_try = np.array(b2)
+            b2_try[i] += h
+            c2 = self.computeCost(X, Y, W1, b1, W2, b2_try)[0]
+            gradb2[i] = (c2 - c) / h
+
+        for i in range(W2.shape[0]):
+            for j in range(W2.shape[1]):
+                W2_try = np.array(W2)
+                W2_try[i, j] += h
+                c2 = self.computeCost(X, Y, W1, b1, W2_try, b2)[0]
+                gradW2[i, j] = (c2 - c) / h
+
+        return gradW1, gradb1, gradW2, gradb2
+
+
+
+def check_gradients(X_train, y_train_oh):
+    X_train = trainSet['data']
+    y_train_oh = trainSet['one_hot']
+
+    X = X_train[0:20,[0]]
+    Y = y_train_oh[:,[0]]
+    
+    network = Classifier(50, 0)
+    network.initialization()
+
+    P = network.evaluateClassifier(X, network.W1[:,0:20], network.b1, network.W2, network.b2)
+    
+    network.computeGradients(X, Y, P, network.W1[:, 0:20], network.b1, network.W2, network.b2)
+    gradW1, gradb1, gradW2, gradb2 = network.computeGradsNum(X, Y, network.W1[:, 0:20], network.b1, network.W2, network.b2, 1e-5)
+
+    # absolute difference between the numerical and analytical gradient
+    diffW1 = np.abs(gradW1 - network.gradW1)
+    diffb1 = np.abs(gradb1 - network.gradb1)
+    diffW2 = np.abs(gradW2 - network.gradW2)
+    diffb2 = np.abs(gradb2 - network.gradb2)
+
+    # print
+    print('For W1: '+str(np.mean(diffW1<1e-6)*100)+"% of absolute errors below 1e-6"+" and maximum absolute error is "+str(diffW1.max()))
+    print('For b1: '+str(np.mean(diffb1<1e-6)*100)+"% of absolute errors below 1e-6"+" and maximum absolute error is "+str(diffb1.max()))
+    print('For W2: '+str(np.mean(diffW2<1e-6)*100)+"% of absolute errors below 1e-6"+" and maximum absolute error is "+str(diffW2.max()))
+    print('For b2: '+str(np.mean(diffb2<1e-6)*100)+"% of absolute errors below 1e-6"+" and maximum absolute error is "+str(diffb2.max()))
+    print("\n")
+
+    # relative error between the numerical and analytical gradient
+    diffW1_rel = np.abs(gradW1 - network.gradW1) / np.maximum(1e-6, np.abs(gradW1) + np.abs(network.gradW1))
+    diffb1_rel = np.abs(gradb1 - network.gradb1) / np.maximum(1e-6, np.abs(gradb1) + np.abs(network.gradb1))
+    diffW2_rel = np.abs(gradW2 - network.gradW2) / np.maximum(1e-6, np.abs(gradW2) + np.abs(network.gradW2))
+    diffb2_rel = np.abs(gradb2 - network.gradb2) / np.maximum(1e-6, np.abs(gradb2) + np.abs(network.gradb2))
+
+    # print
+    print('For W1: '+str(np.mean(diffW1_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffW1_rel.max()))
+    print('For b1: '+str(np.mean(diffb1_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffb1_rel.max()))
+    print('For W2: '+str(np.mean(diffW2_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffW2_rel.max()))
+    print('For b2: '+str(np.mean(diffb2_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffb2_rel.max()))
+
+
+
+if __name__ == '__main__':
+    trainSet, validSet, testSet = load_data()
+
+    check_gradients(trainSet['data'], trainSet['one_hot'])
+
+
+    
     
     
