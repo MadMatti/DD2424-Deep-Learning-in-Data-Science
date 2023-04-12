@@ -51,13 +51,15 @@ def load_data():
 
 class Classifier():
 
-    def __init__(self, hidden_nodes):
+    def __init__(self, hidden_nodes, regularization):
         self.hidden_nodes = hidden_nodes
 
         self.W1 = np.zeros((hidden_nodes, d))
         self.W2 = np.zeros((K, hidden_nodes))
         self.b1 = np.zeros((hidden_nodes, 1))
         self.b2 = np.zeros((K, 1))
+
+        self.lambda_reg = regularization
 
         np.random.seed(42)
         self.initialization()
@@ -72,6 +74,33 @@ class Classifier():
         self.W2 = np.random.normal(mu, sigma2, (self.W2.shape))
         self.b1 = np.zeros((self.b1.shape))
         self.b2 = np.zeros((self.b2.shape))
+
+    def softmax(self, s):
+        return np.exp(s) / np.sum(np.exp(s), axis=0)
+
+    def evaluateClassifier(self, X, W1, b1, W2, b2):
+        s1 = np.dot(W1, X) + b1
+        h = np.maximum(s1, 0)
+        s2 = np.dot(W2, h) + b2
+        P = self.softmax(s2)
+        return P
+
+    def cross_entropy(self, X, Y, W1, b1, W2, b2):
+        P = self.evaluateClassifier(X, W1, b1, W2, b2)
+        loss = -np.sum(Y * np.log(P)) / X.shape[1]
+        return loss
+
+    def computeCost(self, X, Y, W1, b1, W2, b2):
+        loss = self.cross_entropy(X, Y, W1, b1, W2, b2)
+        reg = self.lambda_reg * (np.sum(np.square(W1)) + np.sum(np.square(W2)))
+        loss_reg = loss + reg
+        return loss, loss_reg
+
+    def computeAccuracy(self, X, y):
+        P = self.evaluateClassifier(X, self.W1, self.b1, self.W2, self.b2)
+        y_pred = np.argmax(P, axis=0)
+        acc = np.sum(y_pred == y) / X.shape[1]
+        return acc
 
     
     
