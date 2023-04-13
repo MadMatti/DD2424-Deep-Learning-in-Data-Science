@@ -1,6 +1,10 @@
+import math
 import pickle 
 import numpy as np
 import matplotlib.pyplot as plt
+
+import warnings
+warnings.filterwarnings("ignore")
 
 
 data_dir = 'dataset/'
@@ -51,7 +55,7 @@ def load_data():
 
 class Classifier():
 
-    def __init__(self, hidden_nodes, regularization):
+    def __init__(self, hidden_nodes, regularization, batch_size, n_epochs, learning_rate, cyclical, eta_min, eta_max ,step_size, n_cycles):
         self.hidden_nodes = hidden_nodes
 
         self.W1 = np.zeros((hidden_nodes, d))
@@ -65,6 +69,14 @@ class Classifier():
         self.gradb2 = np.zeros((K, 1))
 
         self.lambda_reg = regularization
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.eta = learning_rate
+        self.cyclical = cyclical
+        self.eta_min = eta_min
+        self.eta_max = eta_max
+        self.step_size = step_size
+        self.n_cycles = n_cycles
 
         np.random.seed(42)
         self.initialization()
@@ -121,6 +133,7 @@ class Classifier():
         self.gradb1 = np.sum(G, axis=1, keepdims=True) / X.shape[1]
         self.gradW1 = np.dot(G, X.T) / X.shape[1] + 2 * self.lambda_reg * W1
 
+    # adaptation of matlab code to calculate numerical gradients
     def computeGradsNum(self, X, Y, W1, b1, W2, b2, h):
         gradW1 = np.zeros(W1.shape)
         gradb1 = np.zeros(b1.shape)
@@ -157,20 +170,73 @@ class Classifier():
 
         return gradW1, gradb1, gradW2, gradb2
 
+    def fit(self, X, Y, validSet):
+        N = X.shape[1]
+        metrics = {
+            'train_loss': [],
+            'train_cost': [],
+            'train_acc': [],
+            'valid_loss': [],
+            'valid_cost': [],
+            'valid_acc': []
+        }
+
+        n_batch = N // self.batch_size
+
+        if self.cyclical:
+            iterations = self.n_cycles * 2 * self.step_size # each cycle correspond to two steps
+            num_epochs = iterations // n_batch
+            list_eta = []
+        else:
+            num_epochs = self.n_epochs
+
+        for epoch in range(num_epochs):
+
+            for j in range(n_batch):
+                j_start = j * self.batch_size
+                j_end = (j + 1) * self.batch_size
+
+                X_batch = X[:, j_start:j_end]
+                Y_batch = Y[:, j_start:j_end]
+
+                P_batch = self.evaluateClassifier(X_batch, self.W1, self.b1, self.W2, self.b2)
+                self.computeGradients(X_batch, Y_batch, P_batch, self.W1, self.b1, self.W2, self.b2)
+
+                # implement formulas 14 and 15 for cyclical learning rate
+                if self.cyclical:
+                    t = epoch * n_batch + j
+                    cycle = np.floor(t / (2 * self.step_size))
+                    if 2 * cycle * self.step_size <= t <= (2 * cycle + 1) * self.step_size:
+                        self.eta = self.eta_min + (t - 2 * cycle * self.step_size) / self.step_size * (self.eta_max - self.eta_min)
+                    elif (2 * cycle + 1) * self.step_size <= t <= 2 * (cycle + 1) * self.step_size:
+                        self.eta = self.eta_max - (t - (2 * cycle + 1) * self.step_size) / self.step_size * (self.eta_max - self.eta_min)
+
+                list_eta.append(self.eta)
+
+                self.W1 -= self.eta * self.gradW1
+                self.b1 -= self.eta * self.gradb1
+                self.W2 -= self.eta * self.gradW2
+                self.b2 -= self.eta * self.gradb2
+
+            metrics['train_loss'].append(self.computeCost(X, Y, self.W1, self.b1, self.W2, self.b2)[0])
+            metrics['train_cost'].append(self.computeCost(X, Y, self.W1, self.b1, self.W2, self.b2)[1])
+            metrics['train_acc'].append(self.computeAccuracy(X, np.argmax(Y, axis=0)))
+            metrics['valid_loss'].append(self.computeCost(validSet['data'], validSet['one_hot'], self.W1, self.b1, self.W2, self.b2)[0])
+            metrics['valid_cost'].append(self.computeCost(validSet['data'], validSet['one_hot'], self.W1, self.b1, self.W2, self.b2)[1])
+            metrics['valid_acc'].append(self.computeAccuracy(validSet['data'], np.argmax(validSet['one_hot'], axis=0)))
+
+        return metrics, list_eta
 
 
 def check_gradients(X_train, y_train_oh):
     X_train = trainSet['data']
     y_train_oh = trainSet['one_hot']
-
     X = X_train[0:20,[0]]
     Y = y_train_oh[:,[0]]
-    
+
     network = Classifier(50, 0)
     network.initialization()
-
     P = network.evaluateClassifier(X, network.W1[:,0:20], network.b1, network.W2, network.b2)
-    
     network.computeGradients(X, Y, P, network.W1[:, 0:20], network.b1, network.W2, network.b2)
     gradW1, gradb1, gradW2, gradb2 = network.computeGradsNum(X, Y, network.W1[:, 0:20], network.b1, network.W2, network.b2, 1e-5)
 
@@ -179,7 +245,6 @@ def check_gradients(X_train, y_train_oh):
     diffb1 = np.abs(gradb1 - network.gradb1)
     diffW2 = np.abs(gradW2 - network.gradW2)
     diffb2 = np.abs(gradb2 - network.gradb2)
-
     # print
     print('For W1: '+str(np.mean(diffW1<1e-6)*100)+"% of absolute errors below 1e-6"+" and maximum absolute error is "+str(diffW1.max()))
     print('For b1: '+str(np.mean(diffb1<1e-6)*100)+"% of absolute errors below 1e-6"+" and maximum absolute error is "+str(diffb1.max()))
@@ -192,7 +257,6 @@ def check_gradients(X_train, y_train_oh):
     diffb1_rel = np.abs(gradb1 - network.gradb1) / np.maximum(1e-6, np.abs(gradb1) + np.abs(network.gradb1))
     diffW2_rel = np.abs(gradW2 - network.gradW2) / np.maximum(1e-6, np.abs(gradW2) + np.abs(network.gradW2))
     diffb2_rel = np.abs(gradb2 - network.gradb2) / np.maximum(1e-6, np.abs(gradb2) + np.abs(network.gradb2))
-
     # print
     print('For W1: '+str(np.mean(diffW1_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffW1_rel.max()))
     print('For b1: '+str(np.mean(diffb1_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffb1_rel.max()))
@@ -200,12 +264,62 @@ def check_gradients(X_train, y_train_oh):
     print('For b2: '+str(np.mean(diffb2_rel<1e-6)*100)+"% of relative errors below 1e-6"+" and maximum relative error is "+str(diffb2_rel.max()))
 
 
+def plot_curves(metrics, title):
+    fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+    fig.tight_layout(pad=3.0)
+
+    ax[0].plot(metrics['train_cost'], label='train', color='seagreen')
+    ax[0].plot(metrics['valid_cost'], label='valid', color='indianred')
+    ax[0].set_title('Cost Plot')
+    ax[0].set_xlabel('Epoch')
+    ax[0].set_ylabel('Cost')
+    ax[0].legend()
+    ax[0].grid(True)
+    #ax[0].set_ylim(0, 3)
+
+    ax[1].plot(metrics['train_loss'], label='train', color='seagreen')
+    ax[1].plot(metrics['valid_loss'], label='valid', color='indianred')
+    ax[1].set_title('Loss Plot')
+    ax[1].set_xlabel('Epoch')
+    ax[1].set_ylabel('Loss')
+    ax[1].legend()
+    ax[1].grid(True)
+    #ax[1].set_ylim(0, 3)
+
+    ax[2].plot(metrics['train_acc'], label='train', color='seagreen')
+    ax[2].plot(metrics['valid_acc'], label='valid', color='indianred')
+    ax[2].set_title('Accuracy Plot')
+    ax[2].set_xlabel('Epoch')
+    ax[2].set_ylabel('Accuracy')
+    ax[2].legend()
+    ax[2].grid(True)
+    #ax[2].set_ylim(0, 1)
+
+    plt.suptitle("Learning curves for " + title, y=0.98)
+    plt.subplots_adjust(top=0.85)
+    plt.show()
 
 if __name__ == '__main__':
     trainSet, validSet, testSet = load_data()
 
-    check_gradients(trainSet['data'], trainSet['one_hot'])
+    #check_gradients(trainSet['data'], trainSet['one_hot'])
 
+    network = Classifier(50, 0.01, 100, 200, 1e-5, True, 1e-5, 1e-1,500, 1)
+    network.initialization()
+
+    metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
+
+    # plot list eta
+    plt.plot(list_eta)
+    plt.title('List of eta')
+    plt.xlabel('iteration')
+    plt.ylabel('eta')
+    plt.show()
+
+    # plot curves
+    plot_curves(metrics, '1 cycle with n_s = 500, lambda = 0.01')
+
+    
 
     
     
