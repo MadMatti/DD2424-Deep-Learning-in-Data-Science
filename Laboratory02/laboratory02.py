@@ -2,6 +2,7 @@ import math
 import pickle 
 import numpy as np
 import matplotlib.pyplot as plt
+import csv
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -49,6 +50,41 @@ def load_data():
     trainSet['data'] = preprocess_data(trainSet['data'])
     validSet['data'] = preprocess_data(validSet['data'])
     testSet['data'] = preprocess_data(testSet['data'])
+
+    return trainSet, validSet, testSet
+
+def load_data_more():
+    trainSet = {}
+    validSet = {}
+    testSet = {}
+
+    images_1, labels_one_hot_1, labels_1 = load_batch('data_batch_1')
+    images_2, labels_one_hot_2, labels_2 = load_batch('data_batch_2')
+    images_3, labels_one_hot_3, labels_3 = load_batch('data_batch_3')
+    images_4, labels_one_hot_4, labels_4 = load_batch('data_batch_4')
+    images_5, labels_one_hot_5, labels_5 = load_batch('data_batch_5')
+    images_test, labels_one_hot_test, labels_test = load_batch('test_batch')
+
+    images = np.concatenate((images_1, images_2, images_3, images_4, images_5), axis=1)
+    labels_one_hot = np.concatenate((labels_one_hot_1, labels_one_hot_2, labels_one_hot_3, labels_one_hot_4, labels_one_hot_5), axis=1)
+    labels = np.concatenate((labels_1, labels_2, labels_3, labels_4, labels_5), axis=0)
+
+    # subset for validation
+    np.random.seed(100)
+    indices = np.random.choice(images.shape[1], 5000, replace=False)
+    validSet['data'] = images[:, indices]
+    validSet['one_hot'] = labels_one_hot[:, indices]
+    validSet['labels'] = labels[indices]
+
+    # subset for training
+    trainSet['data'] = np.delete(images, indices, axis=1)
+    trainSet['one_hot'] = np.delete(labels_one_hot, indices, axis=1)
+    trainSet['labels'] = np.delete(labels, indices, axis=0)
+
+    # normalization
+    trainSet['data'] = preprocess_data(trainSet['data'])
+    validSet['data'] = preprocess_data(validSet['data'])
+    testSet['data'] = preprocess_data(images_test)
 
     return trainSet, validSet, testSet
 
@@ -227,6 +263,47 @@ class Classifier():
 
         return metrics, list_eta
 
+    def random_search(self, X, Y, validSet, lambda_values, n_random):
+        search_metrics = {
+            'lambda_search' : [],
+            'accuracy_train' : [],
+            'accuracy_val' : []
+        }
+        best_metrics = {
+            'accuracy_train' : 0,
+            'accuracy_val' : 0,
+            'lamba_' : np.copy(self.lambda_reg)
+        }
+
+        for lmb in lambda_values:
+            list_accuracies_train = []
+            list_accuracies_val = []
+            self.lambda_reg = lmb
+            search_metrics['lambda_search'].append(lmb)
+
+            for rnd in range(n_random):
+                np.random.seed(rnd)
+
+                self.initialization()
+            
+                metrics, _ = self.fit(X, Y, validSet)
+                
+                list_accuracies_train.append(metrics['train_acc'][-1])
+                list_accuracies_val.append(metrics['valid_acc'][-1])
+
+            search_metrics['accuracy_train'].append(np.mean(list_accuracies_train))
+            search_metrics['accuracy_val'].append(np.mean(list_accuracies_val))
+            
+            print('lambda = ', lmb, 'accuracy = ', np.mean(list_accuracies_val))
+
+            if np.mean(list_accuracies_val) > best_metrics['accuracy_val']:
+                best_metrics['accuracy_train'] = np.mean(list_accuracies_train)
+                best_metrics['accuracy_val'] = np.mean(list_accuracies_val)
+                best_metrics['lamba_'] = lmb
+
+        return search_metrics, best_metrics
+
+ 
 
 def check_gradients(X_train, y_train_oh):
     X_train = trainSet['data']
@@ -234,7 +311,7 @@ def check_gradients(X_train, y_train_oh):
     X = X_train[0:20,[0]]
     Y = y_train_oh[:,[0]]
 
-    network = Classifier(50, 0)
+    network = Classifier(50, 0, 20, 200, 0.001, False, 1e-5, 1e-1,500, 1)
     network.initialization()
     P = network.evaluateClassifier(X, network.W1[:,0:20], network.b1, network.W2, network.b2)
     network.computeGradients(X, Y, P, network.W1[:, 0:20], network.b1, network.W2, network.b2)
@@ -299,26 +376,93 @@ def plot_curves(metrics, title):
     plt.subplots_adjust(top=0.85)
     plt.show()
 
+def test_accuracy(network, testSet):
+    P = network.evaluateClassifier(testSet['data'], network.W1, network.b1, network.W2, network.b2)
+    y_pred = np.argmax(P, axis=0)
+    y_true = np.argmax(testSet['one_hot'], axis=0)
+    acc = np.mean(y_pred == y_true)
+    return acc
+
+def call_random_search():
+    trainSet, validSet, testSet = load_data_more()
+
+    # random lambdas to search
+    l_max, l_min = -1, -5
+    l = l_min + (l_max - l_min) * np.random.rand(10)
+    print(l)
+    list_lambda = [10**i for i in l]
+    list_lambda.sort(reverse=True)
+    print(list_lambda)
+
+    network_search = Classifier(50, 0.01, 100, 200, 1e-5, True, 1e-5, 1e-1, 900, 2)
+
+    search, best = network_search.random_search(trainSet['data'], trainSet['one_hot'], validSet, list_lambda, 10)
+
+    print(best)
+
+    print(search)
+
+    # plot train and test accuracy on the y axis and lambda on the x axis
+    plt.plot(list_lambda, search['accuracy_train'], label='train', color='seagreen')
+    plt.plot(list_lambda, search['accuracy_val'], label='valid', color='indianred')
+    plt.title('Accuracy Plot')
+    plt.xlabel('lambda')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+def call_random_search_fine():
+    trainSet, validSet, testSet = load_data_more()
+
+    # random lambdas to search
+    list_lambda = [0.0001, 0.0002, 0.0003, 0.0004, 0.0005, 0.0006, 0.0007, 0.0008, 0.0009, 0.001]
+    print(list_lambda)
+
+    network_search = Classifier(50, 0.01, 100, 200, 1e-5, True, 1e-5, 1e-1, 900, 4)
+
+    search, best = network_search.random_search(trainSet['data'], trainSet['one_hot'], validSet, list_lambda, 10)
+
+    print(best)
+
+    print(search)
+
+    # plot train and test accuracy on the y axis and lambda on the x axis
+    plt.plot(list_lambda, search['accuracy_train'], label='train', color='seagreen')
+    plt.plot(list_lambda, search['accuracy_val'], label='valid', color='indianred')
+    plt.title('Accuracy Plot')
+    plt.xlabel('lambda')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+
+
+
 if __name__ == '__main__':
-    trainSet, validSet, testSet = load_data()
+    # trainSet, validSet, testSet = load_data()
 
     #check_gradients(trainSet['data'], trainSet['one_hot'])
 
-    network = Classifier(50, 0.01, 100, 200, 1e-5, True, 1e-5, 1e-1,500, 1)
-    network.initialization()
+    # network = Classifier(50, 0.01, 100, 200, 1e-5, True, 1e-5, 1e-1,800, 3)
+    # network.initialization()
 
-    metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
+    # metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
     # plot list eta
-    plt.plot(list_eta)
-    plt.title('List of eta')
-    plt.xlabel('iteration')
-    plt.ylabel('eta')
-    plt.show()
+    # plt.plot(list_eta)
+    # plt.title('List of eta')
+    # plt.xlabel('iteration')
+    # plt.ylabel('eta')
+    # plt.show()
 
     # plot curves
-    plot_curves(metrics, '1 cycle with n_s = 500, lambda = 0.01')
+    # plot_curves(metrics, '3 cycle with n_s = 800, lambda = 0.01')
+    # print(test_accuracy(network, testSet))
 
+    #call_random_search()
+    call_random_search_fine()
     
 
     
