@@ -63,7 +63,7 @@ def load_data_more():
     images_3, labels_one_hot_3, labels_3 = load_batch('data_batch_3')
     images_4, labels_one_hot_4, labels_4 = load_batch('data_batch_4')
     images_5, labels_one_hot_5, labels_5 = load_batch('data_batch_5')
-    images_test, labels_one_hot_test, labels_test = load_batch('test_batch')
+    testSet['data'], testSet['one_hot'], testSet['labels'] = load_batch('test_batch')
 
     images = np.concatenate((images_1, images_2, images_3, images_4, images_5), axis=1)
     labels_one_hot = np.concatenate((labels_one_hot_1, labels_one_hot_2, labels_one_hot_3, labels_one_hot_4, labels_one_hot_5), axis=1)
@@ -71,7 +71,7 @@ def load_data_more():
 
     # subset for validation
     np.random.seed(100)
-    indices = np.random.choice(images.shape[1], 5000, replace=False)
+    indices = np.random.choice(images.shape[1], 1000, replace=False)
     validSet['data'] = images[:, indices]
     validSet['one_hot'] = labels_one_hot[:, indices]
     validSet['labels'] = labels[indices]
@@ -84,7 +84,7 @@ def load_data_more():
     # normalization
     trainSet['data'] = preprocess_data(trainSet['data'])
     validSet['data'] = preprocess_data(validSet['data'])
-    testSet['data'] = preprocess_data(images_test)
+    testSet['data'] = preprocess_data(testSet['data'])
 
     return trainSet, validSet, testSet
 
@@ -445,10 +445,12 @@ if __name__ == '__main__':
 
     #check_gradients(trainSet['data'], trainSet['one_hot'])
 
-    # network = Classifier(50, 0.01, 100, 200, 1e-5, True, 1e-5, 1e-1,800, 3)
-    # network.initialization()
+    trainSet, validSet, testSet = load_data_more()
 
-    # metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
+    network = Classifier(50, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 3)
+    network.initialization()
+
+    metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
     # plot list eta
     # plt.plot(list_eta)
@@ -458,11 +460,11 @@ if __name__ == '__main__':
     # plt.show()
 
     # plot curves
-    # plot_curves(metrics, '3 cycle with n_s = 800, lambda = 0.01')
-    # print(test_accuracy(network, testSet))
+    plot_curves(metrics, '3 cycle with n_s = 900, lambda = 0.001')
+    print(test_accuracy(network, testSet))
 
-    #call_random_search()
-    call_random_search_fine()
+    # call_random_search()
+    # call_random_search_fine()
     
 
     
