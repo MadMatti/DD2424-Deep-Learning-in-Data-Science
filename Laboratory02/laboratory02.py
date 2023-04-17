@@ -91,7 +91,7 @@ def load_data_more():
 
 class Classifier():
 
-    def __init__(self, hidden_nodes, regularization, batch_size, n_epochs, learning_rate, cyclical, eta_min, eta_max ,step_size, n_cycles):
+    def __init__(self, hidden_nodes, regularization, batch_size, n_epochs, learning_rate, cyclical, eta_min, eta_max ,step_size, n_cycles, dropout=None):
         self.hidden_nodes = hidden_nodes
 
         self.W1 = np.zeros((hidden_nodes, d))
@@ -113,6 +113,7 @@ class Classifier():
         self.eta_max = eta_max
         self.step_size = step_size
         self.n_cycles = n_cycles
+        self.dropout = dropout
 
         np.random.seed(42)
         self.initialization()
@@ -235,7 +236,18 @@ class Classifier():
                 X_batch = X[:, j_start:j_end]
                 Y_batch = Y[:, j_start:j_end]
 
+                if self.dropout is not None:
+                    # apply dropout 
+                    mask = np.random.rand(*X_batch.shape) < self.dropout
+                    X_batch = X_batch * mask / self.dropout
+
                 P_batch = self.evaluateClassifier(X_batch, self.W1, self.b1, self.W2, self.b2)
+
+                if self.dropout is not None:
+                    # apply dropout 
+                    mask = np.random.rand(*P_batch.shape) < self.dropout
+                    P_batch = P_batch * mask / self.dropout
+
                 self.computeGradients(X_batch, Y_batch, P_batch, self.W1, self.b1, self.W2, self.b2)
 
                 # implement formulas 14 and 15 for cyclical learning rate
@@ -447,7 +459,7 @@ if __name__ == '__main__':
 
     trainSet, validSet, testSet = load_data_more()
 
-    network = Classifier(50, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 3)
+    network = Classifier(5000, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 3, 0.7)
     network.initialization()
 
     metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
@@ -460,7 +472,7 @@ if __name__ == '__main__':
     # plt.show()
 
     # plot curves
-    plot_curves(metrics, '3 cycle with n_s = 900, lambda = 0.001')
+    plot_curves(metrics, '3 cycle with n_s = 900, lambda = 0.001, dropout = 0.7')
     print(test_accuracy(network, testSet))
 
     # call_random_search()
