@@ -1,8 +1,10 @@
 import math
-import pickle 
+import pickle
+import random 
 import numpy as np
 import matplotlib.pyplot as plt
-import csv
+import cv2
+from PIL import Image
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -32,9 +34,7 @@ def load_batch(file):
     labels_one_hot = one_hot_labels(labels).T
     return data, labels_one_hot, labels
 
-def preprocess_data(data):
-    mean = np.mean(data, axis=1, keepdims=True)
-    std = np.std(data, axis=1, keepdims=True)
+def preprocess_data(data, mean, std):
     return (data - mean) / std
 
 def load_data():
@@ -47,9 +47,11 @@ def load_data():
     testSet['data'], testSet['one_hot'], testSet['labels'] = load_batch('test_batch')
 
     # normalization
-    trainSet['data'] = preprocess_data(trainSet['data'])
-    validSet['data'] = preprocess_data(validSet['data'])
-    testSet['data'] = preprocess_data(testSet['data'])
+    mean = np.mean(trainSet['data'], axis=1, keepdims=True)
+    std = np.std(trainSet['data'], axis=1, keepdims=True)
+    trainSet['data'] = preprocess_data(trainSet['data'], mean, std)
+    validSet['data'] = preprocess_data(validSet['data'], mean, std)
+    testSet['data'] = preprocess_data(testSet['data'], mean, std)
 
     return trainSet, validSet, testSet
 
@@ -82,16 +84,114 @@ def load_data_more():
     trainSet['labels'] = np.delete(labels, indices, axis=0)
 
     # normalization
-    trainSet['data'] = preprocess_data(trainSet['data'])
-    validSet['data'] = preprocess_data(validSet['data'])
-    testSet['data'] = preprocess_data(testSet['data'])
+    mean = np.mean(trainSet['data'], axis=1, keepdims=True)
+    std = np.std(trainSet['data'], axis=1, keepdims=True)
+    trainSet['data'] = preprocess_data(trainSet['data'], mean, std)
+    validSet['data'] = preprocess_data(validSet['data'], mean, std)
+    testSet['data'] = preprocess_data(testSet['data'], mean, std)
 
     return trainSet, validSet, testSet
+
+def load_data_augmentation():
+    trainSet = {}
+    validSet = {}
+    testSet = {}
+
+    images_1, labels_one_hot_1, labels_1 = load_batch('data_batch_1')
+    images_2, labels_one_hot_2, labels_2 = load_batch('data_batch_2')
+    images_3, labels_one_hot_3, labels_3 = load_batch('data_batch_3')
+    images_4, labels_one_hot_4, labels_4 = load_batch('data_batch_4')
+    images_5, labels_one_hot_5, labels_5 = load_batch('data_batch_5')
+    testSet['data'], testSet['one_hot'], testSet['labels'] = load_batch('test_batch')
+
+    images = np.concatenate((images_1, images_2, images_3, images_4, images_5), axis=1)
+    labels_one_hot = np.concatenate((labels_one_hot_1, labels_one_hot_2, labels_one_hot_3, labels_one_hot_4, labels_one_hot_5), axis=1)
+    labels = np.concatenate((labels_1, labels_2, labels_3, labels_4, labels_5), axis=0)
+
+    # subset for validation
+    np.random.seed(100)
+    indices = np.random.choice(images.shape[1], 1000, replace=False)
+    validSet['data'] = images[:, indices]
+    validSet['one_hot'] = labels_one_hot[:, indices]
+    validSet['labels'] = labels[indices]
+
+    # subset for training
+    trainSet['data'] = np.delete(images, indices, axis=1)
+    trainSet['one_hot'] = np.delete(labels_one_hot, indices, axis=1)
+    trainSet['labels'] = np.delete(labels, indices, axis=0)
+
+
+    # Apply data augmentation to training data
+    augmented_images = []
+    for image in trainSet['data'].T:  # Iterate over images
+        # Apply random horizontal flipping
+        if random.random() < 0.2:
+            image = np.fliplr(image.reshape(3, 32, 32)).flatten()
+
+        # Apply random translation
+        if random.random() < 0.2:
+            x_translation = random.randint(-4, 4)
+            y_translation = random.randint(-4, 4)
+            translation_matrix = np.float32([[1, 0, x_translation], [0, 1, y_translation]])
+            image = cv2.warpAffine(image.reshape(3, 32, 32).transpose(1, 2, 0), translation_matrix, (32, 32), borderMode=cv2.BORDER_REPLICATE).transpose(2, 0, 1).flatten()
+
+        augmented_images.append(image)
+
+    fig, ax = plt.subplots(2, 10, figsize=(20, 4))
+    for i in range(10):
+        ax[0, i].imshow(trainSet['data'][:, i].reshape(3, 32, 32).transpose(1, 2, 0))
+        ax[1, i].imshow(augmented_images[i].reshape(3, 32, 32).transpose(1, 2, 0))
+    plt.show()
+
+    # Concatenate augmented images with original training data
+    trainSet['data'] = np.concatenate((trainSet['data'], np.array(augmented_images).T), axis=1)
+    trainSet['one_hot'] = np.concatenate((trainSet['one_hot'], trainSet['one_hot']), axis=1)
+    trainSet['labels'] = np.concatenate((trainSet['labels'], trainSet['labels']), axis=0)
+    # trainSet['data'] = np.array(augmented_images).T
+
+    # shuffle data
+    np.random.seed(100)
+    indices = np.random.permutation(trainSet['data'].shape[1])
+    trainSet['data'] = trainSet['data'][:, indices]
+    trainSet['one_hot'] = trainSet['one_hot'][:, indices]
+    trainSet['labels'] = trainSet['labels'][indices]
+
+    # normalization
+    mean = np.mean(trainSet['data'], axis=1, keepdims=True)
+    std = np.std(trainSet['data'], axis=1, keepdims=True)
+    trainSet['data'] = preprocess_data(trainSet['data'], mean, std)
+    validSet['data'] = preprocess_data(validSet['data'], mean, std)
+    testSet['data'] = preprocess_data(testSet['data'], mean, std)
+
+    return trainSet, validSet, testSet
+
+def flip_images(data, prob):
+    flipped_data = []
+    for image in data.T:  # Iterate over images
+        # Apply random horizontal flipping
+        if random.random() < prob:
+            image = np.fliplr(image.reshape(3, 32, 32)).flatten()
+        flipped_data.append(image)
+    return np.array(flipped_data).T
+
+def translate_images(data, prob):
+    translate_images = []
+    for image in data.T:  # Iterate over images
+        # Apply random translation
+        if random.random() < prob:
+            x_translation = random.randint(-4, 4)
+            y_translation = random.randint(-4, 4)
+            translation_matrix = np.float32([[1, 0, x_translation], [0, 1, y_translation]])
+            # translate image and bordermode is set to replicate in order to avoid black borders after the translation
+            image = cv2.warpAffine(image.reshape(3, 32, 32).transpose(1, 2, 0), translation_matrix, (32, 32), borderMode=cv2.BORDER_REPLICATE).transpose(2, 0, 1).flatten()
+        translate_images.append(image)
+    return np.array(translate_images).T
+
 
 
 class Classifier():
 
-    def __init__(self, hidden_nodes, regularization, batch_size, n_epochs, learning_rate, cyclical, eta_min, eta_max ,step_size, n_cycles, dropout=None):
+    def __init__(self, hidden_nodes, regularization, batch_size, n_epochs, learning_rate, cyclical, eta_min, eta_max ,step_size, n_cycles, dropout=None, aug_prob=0):
         self.hidden_nodes = hidden_nodes
 
         self.W1 = np.zeros((hidden_nodes, d))
@@ -114,6 +214,7 @@ class Classifier():
         self.step_size = step_size
         self.n_cycles = n_cycles
         self.dropout = dropout
+        self.aug_prob = aug_prob
 
         np.random.seed(42)
         self.initialization()
@@ -228,6 +329,10 @@ class Classifier():
             num_epochs = self.n_epochs
 
         for epoch in range(num_epochs):
+
+            if self.aug_prob > 0:
+                X = flip_images(X, self.aug_prob)
+                X = translate_images(X, self.aug_prob)
 
             for j in range(n_batch):
                 j_start = j * self.batch_size
@@ -458,8 +563,9 @@ if __name__ == '__main__':
     #check_gradients(trainSet['data'], trainSet['one_hot'])
 
     trainSet, validSet, testSet = load_data_more()
+    # trainSet, validSet, testSet = load_data_augmentation()
 
-    network = Classifier(5000, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 3, 0.7)
+    network = Classifier(5000, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 10, 0.9, 0)
     network.initialization()
 
     metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
@@ -472,7 +578,7 @@ if __name__ == '__main__':
     # plt.show()
 
     # plot curves
-    plot_curves(metrics, '3 cycle with n_s = 900, lambda = 0.001, dropout = 0.7')
+    plot_curves(metrics, '3 cycle with n_s = 900, lambda = 0.001, data augmentation')
     print(test_accuracy(network, testSet))
 
     # call_random_search()
