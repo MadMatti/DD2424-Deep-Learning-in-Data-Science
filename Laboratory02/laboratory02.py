@@ -165,27 +165,18 @@ def load_data_augmentation():
 
     return trainSet, validSet, testSet
 
-def flip_images(data, prob):
-    flipped_data = []
-    for image in data.T:  # Iterate over images
-        # Apply random horizontal flipping
-        if random.random() < prob:
-            image = np.fliplr(image.reshape(3, 32, 32)).flatten()
-        flipped_data.append(image)
-    return np.array(flipped_data).T
 
-def translate_images(data, prob):
-    translate_images = []
-    for image in data.T:  # Iterate over images
-        # Apply random translation
-        if random.random() < prob:
-            x_translation = random.randint(-4, 4)
-            y_translation = random.randint(-4, 4)
-            translation_matrix = np.float32([[1, 0, x_translation], [0, 1, y_translation]])
-            # translate image and bordermode is set to replicate in order to avoid black borders after the translation
-            image = cv2.warpAffine(image.reshape(3, 32, 32).transpose(1, 2, 0), translation_matrix, (32, 32), borderMode=cv2.BORDER_REPLICATE).transpose(2, 0, 1).flatten()
-        translate_images.append(image)
-    return np.array(translate_images).T
+def flip_image(image):
+    image = np.fliplr(image.reshape(32, 32, 3)).reshape(3072)
+    return image
+
+def translate_image(image):
+    # translate a single image
+    x_translation = random.randint(-4, 4)
+    y_translation = random.randint(-4, 4)
+    translation_matrix = np.float32([[1, 0, x_translation], [0, 1, y_translation]])
+    image = cv2.warpAffine(image.reshape(3, 32, 32).transpose(1, 2, 0), translation_matrix, (32, 32), borderMode=cv2.BORDER_REPLICATE).transpose(2, 0, 1).flatten()
+    return image
 
 
 
@@ -330,9 +321,11 @@ class Classifier():
 
         for epoch in range(num_epochs):
 
-            if self.aug_prob > 0:
-                X = flip_images(X, self.aug_prob)
-                X = translate_images(X, self.aug_prob)
+            # shaffle data using indeces
+            idx = np.arange(N)
+            np.random.shuffle(idx)
+            X = X[:, idx]
+            Y = Y[:, idx]
 
             for j in range(n_batch):
                 j_start = j * self.batch_size
@@ -340,6 +333,13 @@ class Classifier():
 
                 X_batch = X[:, j_start:j_end]
                 Y_batch = Y[:, j_start:j_end]
+
+                if self.aug_prob > 0:
+                    for i in range(X_batch.shape[1]):
+                        if np.random.rand() < self.aug_prob:
+                            X_batch[:, i] = flip_image(X_batch[:, i])
+                        # if np.random.rand() < self.aug_prob:
+                        #     X_batch[:, i] = translate_image(X_batch[:, i])
 
                 if self.dropout is not None:
                     # apply dropout 
@@ -378,6 +378,8 @@ class Classifier():
             metrics['valid_cost'].append(self.computeCost(validSet['data'], validSet['one_hot'], self.W1, self.b1, self.W2, self.b2)[1])
             metrics['valid_acc'].append(self.computeAccuracy(validSet['data'], np.argmax(validSet['one_hot'], axis=0)))
 
+            # print epoch, train and validation accuracy
+            print('Epoch: %d, Train accuracy: %.2f, Validation accuracy: %.2f' % (epoch, metrics['train_acc'][-1], metrics['valid_acc'][-1]))
         return metrics, list_eta
 
     def random_search(self, X, Y, validSet, lambda_values, n_random):
@@ -565,7 +567,7 @@ if __name__ == '__main__':
     trainSet, validSet, testSet = load_data_more()
     # trainSet, validSet, testSet = load_data_augmentation()
 
-    network = Classifier(5000, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 10, 0.9, 0)
+    network = Classifier(5000, 0.001, 100, 200, 1e-5, True, 1e-5, 1e-1,900, 3, None, 0.4)
     network.initialization()
 
     metrics, list_eta = network.fit(trainSet['data'], trainSet['one_hot'], validSet)
