@@ -338,8 +338,8 @@ class Classifier():
                     for i in range(X_batch.shape[1]):
                         if np.random.rand() < self.aug_prob:
                             X_batch[:, i] = flip_image(X_batch[:, i])
-                        # if np.random.rand() < self.aug_prob:
-                        #     X_batch[:, i] = translate_image(X_batch[:, i])
+                        if np.random.rand() < self.aug_prob:
+                            X_batch[:, i] = translate_image(X_batch[:, i])
 
                 if self.dropout is not None:
                     # apply dropout 
