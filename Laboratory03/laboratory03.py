@@ -2,6 +2,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pickle
 
+import warnings
+warnings.filterwarnings("ignore")
+
 data_dir = 'dataset/'
 
 N = 10000
@@ -103,8 +106,8 @@ class Classifier():
         
         self.W = [np.zeros((self.layer_dims[i+1], self.layer_dims[i])) for i in range(self.n_layers-1)]
         self.b = [np.zeros((self.layer_dims[i+1], 1)) for i in range(self.n_layers-1)]
-        self.gradW = [np.zeros(w.shape for w in self.W)]
-        self.gradb = [np.zeros(b.shape for b in self.b)]
+        self.gradW = [np.zeros_like(w) for w in self.W]
+        self.gradb = [np.zeros_like(b) for b in self.b]
 
         np.random.seed(42)
         self.initialization()
@@ -165,13 +168,19 @@ class Classifier():
         N = X.shape[1]
         G = -(Y - activations[-1])
 
-        self.gradW = np.dot(G, activations[-2].T) / N + 2 * self.lambda_reg * self.W[-1]
-        self.gradb = np.sum(G, axis=1, keepdims=True) / N
+        temp_gradW = [None] * len(self.W)
+        temp_gradb = [None] * len(self.b)
 
-        for i in range(len(self.W) -2, -1, -1):
-            G = np.dot(self.W[i+1].T, G) * np.where(activations[i+1] > 0, 1, 0)
-            self.gradW[i] = np.dot(G, activations[i].T) / N + 2 * self.lambda_reg * self.W[i]
-            self.gradb[i] = np.sum(G, axis=1, keepdims=True) / N
+        temp_gradW[-1] = np.dot(G, activations[-2].T) / N + 2 * self.lambda_reg * self.W[-1]
+        temp_gradb[-1] = np.sum(G, axis=1, keepdims=True) / N
+
+        for i in range(len(self.W) - 2, -1, -1):
+            G = np.dot(self.W[i + 1].T, G) * np.where(activations[i + 1] > 0, 1, 0)
+            temp_gradW[i] = np.dot(G, activations[i].T) / N + 2 * self.lambda_reg * self.W[i]
+            temp_gradb[i] = np.sum(G, axis=1, keepdims=True) / N
+
+        self.gradW = temp_gradW
+        self.gradb = temp_gradb
 
     def fit(self, X, Y, validSet):
         N = X.shape[1]
@@ -187,7 +196,7 @@ class Classifier():
         n_batch = N // self.batch_size
 
         if self.cyclical:
-            iterations = self.n_epochs * 2 * self.step_size
+            iterations = self.n_cycles * 2 * self.step_size
             num_epochs = iterations // n_batch
         else:
             num_epochs = self.n_epochs
@@ -232,4 +241,67 @@ class Classifier():
 
         return metrics
 
+    
+def plot_curves(metrics, title):
+    fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+    fig.tight_layout(pad=3.0)
+
+    ax[0].plot(metrics['train_cost'], label='train', color='seagreen')
+    ax[0].plot(metrics['valid_cost'], label='valid', color='indianred')
+    ax[0].set_title('Cost Plot')
+    ax[0].set_xlabel('Epoch')
+    ax[0].set_ylabel('Cost')
+    ax[0].legend()
+    ax[0].grid(True)
+    #ax[0].set_ylim(0, 3)
+
+    ax[1].plot(metrics['train_loss'], label='train', color='seagreen')
+    ax[1].plot(metrics['valid_loss'], label='valid', color='indianred')
+    ax[1].set_title('Loss Plot')
+    ax[1].set_xlabel('Epoch')
+    ax[1].set_ylabel('Loss')
+    ax[1].legend()
+    ax[1].grid(True)
+    #ax[1].set_ylim(0, 3)
+
+    ax[2].plot(metrics['train_acc'], label='train', color='seagreen')
+    ax[2].plot(metrics['valid_acc'], label='valid', color='indianred')
+    ax[2].set_title('Accuracy Plot')
+    ax[2].set_xlabel('Epoch')
+    ax[2].set_ylabel('Accuracy')
+    ax[2].legend()
+    ax[2].grid(True)
+    #ax[2].set_ylim(0, 1)
+
+    plt.suptitle("Learning curves for " + title, y=0.98)
+    plt.subplots_adjust(top=0.85)
+    plt.show()
+
+def test_accuracy(MLP, testSet):
+    return MLP.computeAccuracy(testSet['data'], np.argmax(testSet['one_hot'], axis=0))
+
+
+if __name__ == '__main__':
+    trainSet, validSet, testSet = load_data()
+    
+    params = {
+        'layer_dims': [d, 50, K],
+        'lambda_reg': 0.01,
+        'batch_size': 100,
+        'n_epochs': 200,
+        'eta': 0.01,
+        'cyclical': True,
+        'eta_min': 1e-5,
+        'eta_max': 1e-1,
+        'step_size': 800,
+        'n_cycles': 3,
+        'init_mode': 'normal'
+    }
+
+    MLP = Classifier(**params)
+    metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
+
+    title = 'Learning curves for 3 cycle with n_step = 800, lambda = 0.01'
+    plot_curves(metrics, title)
+    print('Test accuracy: %.2f' % test_accuracy(MLP, testSet))
         
