@@ -182,8 +182,108 @@ class Classifier():
         self.gradW = temp_gradW
         self.gradb = temp_gradb
 
+    # def computeGradients(self, X, Y):
+    #     k = len(self.W)
+    #     temp_gradW = [None] * k
+    #     temp_gradb = [None] * k
+
+    #     # output layer
+    #     n = X.shape[1]
+    #     activations = self.evaluateClassifier(X)
+    #     P = activations[-1]
+    #     G = -(Y - P)
+    #     temp_gradW[k-1] = (G@activations[k-1].T)/n + 2*self.lambda_reg*self.W[k-1]
+    #     temp_gradb[k-1] = (G@(np.ones((n,1))))/n
+
+    #     # layer k-1
+    #     G = self.W[k-1].T@G
+    #     G = G*np.where(activations[k-1]>0,1,0)
+
+    #     # iterate over layers
+    #     for i in range(k-2,-1,-1):
+    #         temp_gradW[i] = (G@activations[i].T)/n + 2*self.lambda_reg*self.W[i]
+    #         temp_gradb[i] = (G@(np.ones((n,1))))/n
+    #         if i>0:
+    #             G = self.W[i].T@G
+    #             G = G*np.where(activations[i]>0,1,0)
+
+    #     self.gradW = temp_gradW
+    #     self.gradb = temp_gradb
+
+    def set_params(self, W=None, b=None):
+        if W is not None:
+            self.W = W
+        if b is not None:
+            self.b = b
+
+    # def computeGradsNum(self, X, Y, h):
+    #     grads = {
+    #         "W": [W_1.copy() for W_1 in self.W],
+    #         "b": [b_1.copy() for b_1 in self.b],
+    #     }
+
+    #     c = self.computeCost(X, Y)[1]
+    #     k = len(self.W)
+
+    #     for l in range(k):
+    #         for i in range(self.b[l].shape[0]):
+    #             b_try = [b_1.copy() for b_1 in self.b]
+    #             b_try[l][i,0] += h
+    #             self.set_params(b=b_try)
+    #             c2 = self.computeCost(X, Y)[1]
+    #             grads["b"][l][i,0] = (c2 - c) / h
+
+    #         for i in range(self.W[l].shape[0]):
+    #             for j in range(self.W[l].shape[1]):
+    #                 W_try = [W_1.copy() for W_1 in self.W]
+    #                 W_try[l][i,j] += h
+    #                 self.set_params(W=W_try)
+    #                 c2 = self.computeCost(X, Y)[1]
+    #                 grads["W"][l][i,j] = (c2 - c) / h
+
+    #     return grads
+
+    def computeGradsNum(self, X, Y, h):
+        grads = {"W": [], "b": []}
+        for i in range(len(self.W)):
+            grads["W"].append(np.zeros_like(self.W[i]))
+            grads["b"].append(np.zeros_like(self.b[i]))
+
+        for i in range(len(self.b)):
+            for j in range(self.b[i].shape[0]):
+                b_try = np.copy(self.b)
+                b_try[i][j, 0] -= h
+                self.set_params(b=b_try)
+                c1 = self.computeCost(X, Y)[1]
+                b_try = np.copy(self.b)
+                b_try[i][j, 0] += h
+                self.set_params(b=b_try)
+                c2 = self.computeCost(X, Y)[1]
+                grads["b"][i][j, 0] = (c2 - c1) / (2 * h)
+
+            for j in range(self.W[i].shape[0]):
+                for k in range(self.W[i].shape[1]):
+                    W_try = np.copy(self.W)
+                    W_try[i][j, k] -= h
+                    self.set_params(W=W_try)
+                    c1 = self.computeCost(X, Y)[1]
+                    W_try = np.copy(self.W)
+                    W_try[i][j, k] += h
+                    self.set_params(W=W_try)
+                    c2 = self.computeCost(X, Y)[1]
+                    grads["W"][i][j, k] = (c2 - c1) / (2 * h)
+
+        self.set_params(W=self.W, b=self.b)
+        return grads
+
+
+
+
+
+
     def fit(self, X, Y, validSet):
         N = X.shape[1]
+        
         metrics = {
             'train_loss': [],
             'train_cost': [],
@@ -241,7 +341,35 @@ class Classifier():
 
         return metrics
 
+
+def check_gradients(X_train, y_train_oh, params):
+    # check differences between analytical and numerical gradients usign the first 20 input samples
+    X = X_train[0:20,0:5]
+    Y = y_train_oh[:,0:5]
+    net = Classifier(**params)
+    net.computeGradients(X, Y)
+    analytic_grads = {"W": net.gradW, "b": net.gradb}
+    num_grads = net.computeGradsNum(X, Y, 1e-7)
+
+    # Compute the % of absolute errors below 1e-6 and maximum absolute error for weights by layers
+    print("For weights, the % of absolute errors below 1e-6 by layers is:")
+    weights_perc_err = [np.mean(np.abs(analytic_grads["W"][i] - num_grads["W"][i]) < 1e-6) * 100 for i in range(len(analytic_grads["W"]))]
+    print(weights_perc_err)
+    print("and the maximum absolute error by layers is:")
+    weights_max_err = [np.max(np.abs(analytic_grads["W"][i] - num_grads["W"][i])) for i in range(len(analytic_grads["W"]))]
+    print(weights_max_err)
+
+    # Compute the % of absolute errors below 1e-6 and maximum absolute error for bias by layers
+    print("\nFor bias, the % of absolute errors below 1e-6 by layers is:")
+    bias_perc_err = [np.mean(np.abs(analytic_grads["b"][i] - num_grads["b"][i]) < 1e-6) * 100 for i in range(len(analytic_grads["b"]))]
+    print(bias_perc_err)
+    print("and the maximum absolute error by layers is:")
+    bias_max_err = [np.max(np.abs(analytic_grads["b"][i] - num_grads["b"][i])) for i in range(len(analytic_grads["b"]))]
+    print(bias_max_err)
+
     
+
+
 def plot_curves(metrics, title):
     fig, ax = plt.subplots(1, 3, figsize=(15, 5))
     fig.tight_layout(pad=3.0)
@@ -282,22 +410,25 @@ def test_accuracy(MLP, testSet):
 
 
 if __name__ == '__main__':
-    trainSet, validSet, testSet = load_data()
+    trainSet, validSet, testSet = load_data_more()
     
     params = {
-        'layer_dims': [d, 50, K],
-        'lambda_reg': 0.01,
+        'layer_dims': [d, 50, 50, K],
+        'lambda_reg': 0.005,
         'batch_size': 100,
         'n_epochs': 200,
         'eta': 0.01,
         'cyclical': True,
         'eta_min': 1e-5,
         'eta_max': 1e-1,
-        'step_size': 800,
-        'n_cycles': 3,
-        'init_mode': 'normal'
+        'step_size': 2250,
+        'n_cycles': 2,
+        'init_mode': 'xavier'
     }
 
+    #check_gradients(trainSet['data'], trainSet['one_hot'], params)
+
+    #exit(0)
     MLP = Classifier(**params)
     metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
