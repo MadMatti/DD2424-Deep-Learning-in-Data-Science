@@ -406,14 +406,14 @@ def plot_curves(metrics, title):
     plt.show()
 
 def test_accuracy(MLP, testSet):
-    return MLP.computeAccuracy(testSet['data'], np.argmax(testSet['one_hot'], axis=0))
+    return MLP.computeAccuracy(testSet['data'], np.argmax(testSet['one_hot'], axis=0))*100
 
 
 if __name__ == '__main__':
     trainSet, validSet, testSet = load_data_more()
     
     params = {
-        'layer_dims': [d, 50, 50, K],
+        'layer_dims': [d, 50, 30, 20, 20, 10, 10, 10, 10, K],
         'lambda_reg': 0.005,
         'batch_size': 100,
         'n_epochs': 200,
@@ -432,7 +432,7 @@ if __name__ == '__main__':
     MLP = Classifier(**params)
     metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
-    title = 'Learning curves for 3 cycle with n_step = 800, lambda = 0.01'
+    title = '2 cycle with n_s = 2250, lambda = 0.005'
     plot_curves(metrics, title)
-    print('Test accuracy: %.2f' % test_accuracy(MLP, testSet))
+    print("Final test accuracy: %.2f" % test_accuracy(MLP, testSet))
         
