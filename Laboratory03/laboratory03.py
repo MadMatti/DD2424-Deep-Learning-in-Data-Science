@@ -182,66 +182,11 @@ class Classifier():
         self.gradW = temp_gradW
         self.gradb = temp_gradb
 
-    # def computeGradients(self, X, Y):
-    #     k = len(self.W)
-    #     temp_gradW = [None] * k
-    #     temp_gradb = [None] * k
-
-    #     # output layer
-    #     n = X.shape[1]
-    #     activations = self.evaluateClassifier(X)
-    #     P = activations[-1]
-    #     G = -(Y - P)
-    #     temp_gradW[k-1] = (G@activations[k-1].T)/n + 2*self.lambda_reg*self.W[k-1]
-    #     temp_gradb[k-1] = (G@(np.ones((n,1))))/n
-
-    #     # layer k-1
-    #     G = self.W[k-1].T@G
-    #     G = G*np.where(activations[k-1]>0,1,0)
-
-    #     # iterate over layers
-    #     for i in range(k-2,-1,-1):
-    #         temp_gradW[i] = (G@activations[i].T)/n + 2*self.lambda_reg*self.W[i]
-    #         temp_gradb[i] = (G@(np.ones((n,1))))/n
-    #         if i>0:
-    #             G = self.W[i].T@G
-    #             G = G*np.where(activations[i]>0,1,0)
-
-    #     self.gradW = temp_gradW
-    #     self.gradb = temp_gradb
-
     def set_params(self, W=None, b=None):
         if W is not None:
             self.W = W
         if b is not None:
             self.b = b
-
-    # def computeGradsNum(self, X, Y, h):
-    #     grads = {
-    #         "W": [W_1.copy() for W_1 in self.W],
-    #         "b": [b_1.copy() for b_1 in self.b],
-    #     }
-
-    #     c = self.computeCost(X, Y)[1]
-    #     k = len(self.W)
-
-    #     for l in range(k):
-    #         for i in range(self.b[l].shape[0]):
-    #             b_try = [b_1.copy() for b_1 in self.b]
-    #             b_try[l][i,0] += h
-    #             self.set_params(b=b_try)
-    #             c2 = self.computeCost(X, Y)[1]
-    #             grads["b"][l][i,0] = (c2 - c) / h
-
-    #         for i in range(self.W[l].shape[0]):
-    #             for j in range(self.W[l].shape[1]):
-    #                 W_try = [W_1.copy() for W_1 in self.W]
-    #                 W_try[l][i,j] += h
-    #                 self.set_params(W=W_try)
-    #                 c2 = self.computeCost(X, Y)[1]
-    #                 grads["W"][l][i,j] = (c2 - c) / h
-
-    #     return grads
 
     def computeGradsNum(self, X, Y, h):
         grads = {"W": [], "b": []}
@@ -275,11 +220,6 @@ class Classifier():
 
         self.set_params(W=self.W, b=self.b)
         return grads
-
-
-
-
-
 
     def fit(self, X, Y, validSet):
         N = X.shape[1]
@@ -367,9 +307,6 @@ def check_gradients(X_train, y_train_oh, params):
     bias_max_err = [np.max(np.abs(analytic_grads["b"][i] - num_grads["b"][i])) for i in range(len(analytic_grads["b"]))]
     print(bias_max_err)
 
-    
-
-
 def plot_curves(metrics, title):
     fig, ax = plt.subplots(1, 3, figsize=(15, 5))
     fig.tight_layout(pad=3.0)
@@ -428,7 +365,6 @@ if __name__ == '__main__':
 
     #check_gradients(trainSet['data'], trainSet['one_hot'], params)
 
-    #exit(0)
     MLP = Classifier(**params)
     metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
