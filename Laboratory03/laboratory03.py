@@ -89,7 +89,7 @@ def load_data_more():
 
 
 class Classifier():
-    def __init__(self, layer_dims, lambda_reg, batch_size, n_epochs, eta, cyclical, eta_min, eta_max, step_size, n_cycles, init_mode, batch_norm):
+    def __init__(self, layer_dims, lambda_reg, batch_size, n_epochs, eta, cyclical, eta_min, eta_max, step_size, n_cycles, init_mode, batch_norm, adam):
         self.layer_dims = layer_dims
         self.lambda_reg = lambda_reg
         self.batch_size = batch_size
@@ -104,8 +104,12 @@ class Classifier():
         self.batch_norm = batch_norm
         self.eps = 1e-10
         self.momentum = 0.9
-        self.test_sensibility = True
+        self.test_sensibility = False
         self.sigma = 1e-4
+        self.adam = adam
+        self.eta_decay = None
+        self.beta1 = 0.9
+        self.beta2 = 0.999
 
         self.n_layers = len(layer_dims)
         
@@ -119,6 +123,17 @@ class Classifier():
             self.beta = [np.zeros((self.layer_dims[i+1], 1)) for i in range(self.n_layers-2)]
             self.gradGamma = [np.zeros_like(g) for g in self.gamma]
             self.gradBeta = [np.zeros_like(b) for b in self.beta]
+
+        if self.adam:
+            self.mW = [np.zeros_like(w) for w in self.W]
+            self.mb = [np.zeros_like(b) for b in self.b]
+            self.vW = [np.zeros_like(w) for w in self.W]
+            self.vb = [np.zeros_like(b) for b in self.b]
+            if self.batch_norm:
+                self.mGamma = [np.zeros_like(g) for g in self.gamma]
+                self.mBeta = [np.zeros_like(b) for b in self.beta]
+                self.vGamma = [np.zeros_like(g) for g in self.gamma]
+                self.vBeta = [np.zeros_like(b) for b in self.beta]
 
         np.random.seed(42)
         self.initialization()
@@ -313,7 +328,7 @@ class Classifier():
         if self.batch_norm:
             return grad_W, grad_b, grad_gamma, grad_beta
         else:
-            return grad_W, grad_b       
+            return grad_W, grad_b   
 
     def fit(self, X, Y, validSet):
         N = X.shape[1]
@@ -374,13 +389,47 @@ class Classifier():
                     elif (2 * cycle + 1) * self.step_size <= t <= 2 * (cycle + 1) * self.step_size:
                         self.eta = self.eta_max - (t - (2 * cycle + 1) * self.step_size) / self.step_size * (self.eta_max - self.eta_min)
 
-                for i in range(len(self.W)):
-                    self.W[i] -= self.eta * self.gradW[i]
-                    self.b[i] -= self.eta * self.gradb[i]
-                if self.batch_norm:
-                    for i in range(len(self.gamma)):
-                        self.gamma[i] -= self.eta * self.gradGamma[i]
-                        self.beta[i] -= self.eta * self.gradBeta[i]
+                # adam optimizer
+                if self.adam:
+                    t = epoch * n_batch + j + 1
+
+                    for i in range(len(self.W)):
+                        self.mW[i] = self.beta1 * self.mW[i] + (1 - self.beta1) * self.gradW[i]
+                        self.mb[i] = self.beta1 * self.mb[i] + (1 - self.beta1) * self.gradb[i]
+                        self.vW[i] = self.beta2 * self.vW[i] + (1 - self.beta2) * np.power(self.gradW[i], 2)
+                        self.vb[i] = self.beta2 * self.vb[i] + (1 - self.beta2) * np.power(self.gradb[i], 2)
+
+                        mW_hat = self.mW[i] / (1 - np.power(self.beta1, t))
+                        mb_hat = self.mb[i] / (1 - np.power(self.beta1, t))
+                        vW_hat = self.vW[i] / (1 - np.power(self.beta2, t))
+                        vb_hat = self.vb[i] / (1 - np.power(self.beta2, t))
+
+                        self.W[i] -= self.eta * mW_hat / (np.sqrt(vW_hat) + self.eps)
+                        self.b[i] -= self.eta * mb_hat / (np.sqrt(vb_hat) + self.eps)
+
+                    if self.batch_norm:
+                        for i in range(len(self.gamma)):
+                            self.mGamma[i] = self.beta1 * self.mGamma[i] + (1 - self.beta1) * self.gradGamma[i]
+                            self.mBeta[i] = self.beta1 * self.mBeta[i] + (1 - self.beta1) * self.gradBeta[i]
+                            self.vGamma[i] = self.beta2 * self.vGamma[i] + (1 - self.beta2) * np.power(self.gradGamma[i], 2)
+                            self.vBeta[i] = self.beta2 * self.vBeta[i] + (1 - self.beta2) * np.power(self.gradBeta[i], 2)
+
+                            mGamma_hat = self.mGamma[i] / (1 - np.power(self.beta1, t))
+                            mBeta_hat = self.mBeta[i] / (1 - np.power(self.beta1, t))
+                            vGamma_hat = self.vGamma[i] / (1 - np.power(self.beta2, t))
+                            vBeta_hat = self.vBeta[i] / (1 - np.power(self.beta2, t))
+
+                            self.gamma[i] -= self.eta * mGamma_hat / (np.sqrt(vGamma_hat) + self.eps)
+                            self.beta[i] -= self.eta * mBeta_hat / (np.sqrt(vBeta_hat) + self.eps)
+
+                else:
+                    for i in range(len(self.W)):
+                        self.W[i] -= self.eta * self.gradW[i]
+                        self.b[i] -= self.eta * self.gradb[i]
+                    if self.batch_norm:
+                        for i in range(len(self.gamma)):
+                            self.gamma[i] -= self.eta * self.gradGamma[i]
+                            self.beta[i] -= self.eta * self.gradBeta[i]
 
             metrics['train_loss'].append(self.computeCost(X, Y, self.mean_avg, self.var_avg)[0])
             metrics['train_cost'].append(self.computeCost(X, Y, self.mean_avg, self.var_avg)[1])
@@ -396,6 +445,9 @@ class Classifier():
             np.random.shuffle(idx)
             X = X[:, idx]
             Y = Y[:, idx]
+
+            if self.eta_decay is not None:
+                self.eta *= self.eta_decay
 
         return metrics
 
@@ -545,11 +597,11 @@ if __name__ == '__main__':
     trainSet, validSet, testSet = load_data_more()
 
     params = {
-        'layer_dims': [d, 150, 150, K],
+        'layer_dims': [d, 50, 50, 50, 50, 50, 50, K],
         'lambda_reg': 0.005,
         'batch_size': 100,
-        'n_epochs': 200,
-        'eta': 0.01,
+        'n_epochs': 20,
+        'eta': 0.001,
         'cyclical': True,
         'eta_min': 1e-5,
         'eta_max': 1e-1,
@@ -557,6 +609,7 @@ if __name__ == '__main__':
         'n_cycles': 2,
         'init_mode': 'he',
         'batch_norm': True,
+        'adam': False,
     }
 
     # check_gradients(trainSet['data'], trainSet['one_hot'], params)
@@ -569,58 +622,67 @@ if __name__ == '__main__':
     # exit()
     # metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
-    title = '2 cycle with n_s = 2250, lambda = 0.005'
+    # title = '20 epochs, lambda = 0.005, eta = 0.001 and Adam optimizer'
     # plot_curves(metrics, title)
     # print("Final test accuracy: %.2f" % test_accuracy(MLP, testSet))
 
-    hinned_units = [100, 250, 500]
+    hinned_units = [50, 100, 250]
     all_metrics = {}
     for i in range(len(hinned_units)):
-        params['layer_dims'] = [d, hinned_units[i], hinned_units[i], K]
+        params['layer_dims'] = [d, hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], K]
         MLP = Classifier(**params)
         metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
+        # print test accuracy for the number of nodes in the hidden layer
+        print("Final test accuracy for %d hidden units: %.2f" % (hinned_units[i], test_accuracy(MLP, testSet)))
         all_metrics[i] = metrics
 
     # plot cost, loss and accuracy for each configurations on different colors
     fig, ax = plt.subplots(1, 3, figsize=(15, 5))
     fig.tight_layout(pad=3.0)
 
-    ax[0].plot(all_metrics[0]['train_cost'], label='100_train', color='seagreen')
-    ax[0].plot(all_metrics[0]['valid_cost'], label='100_valid', color='seagreeen', linestyle='dashed')
-    ax[0].plot(all_metrics[1]['train_cost'], label='250_train', color='indianred')
-    ax[0].plot(all_metrics[1]['valid_cost'], label='250_valid', color='indianred', linestyle='dashed')
-    ax[0].plot(all_metrics[2]['train_cost'], label='500_train', color='yellowgreen')
-    ax[0].plot(all_metrics[2]['valid_cost'], label='500_valid', color='yellowgreen', linestyle='dashed')
+    ax[0].plot(all_metrics[0]['train_cost'], label='50_train', color='seagreen')
+    ax[0].plot(all_metrics[0]['valid_cost'], label='50_valid', color='seagreen', linestyle='dashed')
+    ax[0].plot(all_metrics[1]['train_cost'], label='100_train', color='indianred')
+    ax[0].plot(all_metrics[1]['valid_cost'], label='100_valid', color='indianred', linestyle='dashed')
+    ax[0].plot(all_metrics[2]['train_cost'], label='250_train', color='darkorange')
+    ax[0].plot(all_metrics[2]['valid_cost'], label='250_valid', color='darkorange', linestyle='dashed')
     ax[0].set_title('Cost Plot')
     ax[0].set_xlabel('Epoch')
     ax[0].set_ylabel('Cost')
     ax[0].legend()
+    ax[0].grid(True)
 
-    ax[1].plot(all_metrics[0]['train_loss'], label='100_train', color='seagreen')
-    ax[1].plot(all_metrics[0]['valid_loss'], label='100_valid', color='seagreeen', linestyle='dashed')
-    ax[1].plot(all_metrics[1]['train_loss'], label='250_train', color='indianred')
-    ax[1].plot(all_metrics[1]['valid_loss'], label='250_valid', color='indianred', linestyle='dashed')
-    ax[1].plot(all_metrics[2]['train_loss'], label='500_train', color='yellowgreen')
-    ax[1].plot(all_metrics[2]['valid_loss'], label='500_valid', color='yellowgreen', linestyle='dashed')
+
+    ax[1].plot(all_metrics[0]['train_loss'], label='50_train', color='seagreen')
+    ax[1].plot(all_metrics[0]['valid_loss'], label='50_valid', color='seagreen', linestyle='dashed')
+    ax[1].plot(all_metrics[1]['train_loss'], label='100_train', color='indianred')
+    ax[1].plot(all_metrics[1]['valid_loss'], label='100_valid', color='indianred', linestyle='dashed')
+    ax[1].plot(all_metrics[2]['train_loss'], label='250_train', color='darkorange')
+    ax[1].plot(all_metrics[2]['valid_loss'], label='250_valid', color='darkorange', linestyle='dashed')
     ax[1].set_title('Loss Plot')
     ax[1].set_xlabel('Epoch')
     ax[1].set_ylabel('Loss')
     ax[1].legend()
+    ax[1].grid(True)
 
-    ax[2].plot(all_metrics[0]['train_acc'], label='100_train', color='seagreen')
-    ax[2].plot(all_metrics[0]['valid_acc'], label='100_valid', color='seagreeen', linestyle='dashed')
-    ax[2].plot(all_metrics[1]['train_acc'], label='250_train', color='indianred')
-    ax[2].plot(all_metrics[1]['valid_acc'], label='250_valid', color='indianred', linestyle='dashed')
-    ax[2].plot(all_metrics[2]['train_acc'], label='500_train', color='yellowgreen')
-    ax[2].plot(all_metrics[2]['valid_acc'], label='500_valid', color='yellowgreen', linestyle='dashed')
+    ax[2].plot(all_metrics[0]['train_acc'], label='50_train', color='seagreen')
+    ax[2].plot(all_metrics[0]['valid_acc'], label='50_valid', color='seagreen', linestyle='dashed')
+    ax[2].plot(all_metrics[1]['train_acc'], label='100_train', color='indianred')
+    ax[2].plot(all_metrics[1]['valid_acc'], label='100_valid', color='indianred', linestyle='dashed')
+    ax[2].plot(all_metrics[2]['train_acc'], label='250_train', color='darkorange')
+    ax[2].plot(all_metrics[2]['valid_acc'], label='250_valid', color='darkorange', linestyle='dashed')
     ax[2].set_title('Accuracy Plot')
     ax[2].set_xlabel('Epoch')
     ax[2].set_ylabel('Accuracy')
     ax[2].legend()
+    ax[2].grid(True)
 
+    title = '2 cycle with n_s = 2250, lambda = 0.005'
     plt.suptitle("Learning curves for " + title, y=0.98)
     plt.subplots_adjust(top=0.85)
     plt.show()
+
+    
 
     
     
