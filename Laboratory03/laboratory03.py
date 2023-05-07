@@ -68,7 +68,7 @@ def load_data_more():
 
     # subset for validation
     np.random.seed(100)
-    indices = np.random.choice(images.shape[1], 1000, replace=False)
+    indices = np.random.choice(images.shape[1], 5000, replace=False)
     validSet['data'] = images[:, indices]
     validSet['one_hot'] = labels_one_hot[:, indices]
     validSet['labels'] = labels[indices]
@@ -89,7 +89,7 @@ def load_data_more():
 
 
 class Classifier():
-    def __init__(self, layer_dims, lambda_reg, batch_size, n_epochs, eta, cyclical, eta_min, eta_max, step_size, n_cycles, init_mode, batch_norm, adam):
+    def __init__(self, layer_dims, lambda_reg, batch_size, n_epochs, eta, cyclical, eta_min, eta_max, step_size, n_cycles, init_mode, batch_norm, adam, preciseBN):
         self.layer_dims = layer_dims
         self.lambda_reg = lambda_reg
         self.batch_size = batch_size
@@ -110,6 +110,8 @@ class Classifier():
         self.eta_decay = None
         self.beta1 = 0.9
         self.beta2 = 0.999
+        self.after_relu = False
+        self.preciseBN = preciseBN
 
         self.n_layers = len(layer_dims)
         
@@ -180,16 +182,22 @@ class Classifier():
 
         # Iterate layers
         for i in range(k-1):
-            S[i] = self.W[i]@X_layers[i] + self.b[i]
-            if self.batch_norm:
-                if return_values:
-                    mean[i] = np.mean(S[i], axis=1, keepdims=True)
-                    var[i] = np.var(S[i], axis=1, keepdims=True)
-                S_bn[i] = (S[i] - mean[i]) / np.sqrt(var[i] + self.eps)
-                S_bn_scaled = self.gamma[i] * S_bn[i] + self.beta[i]
-                X_layers[i+1] = self.relu(S_bn_scaled)
-            else:
-                X_layers[i+1] = self.relu(S[i])
+                S[i] = self.W[i]@X_layers[i] + self.b[i]
+                if self.batch_norm and not self.after_relu:
+                    if return_values:
+                        mean[i] = np.mean(S[i], axis=1, keepdims=True)
+                        var[i] = np.var(S[i], axis=1, keepdims=True)
+                    S_bn[i] = (S[i] - mean[i]) / np.sqrt(var[i] + self.eps)
+                    S_bn_scaled = self.gamma[i] * S_bn[i] + self.beta[i]
+                    X_layers[i + 1] = self.relu(S_bn_scaled)
+                else:
+                    X_layers[i + 1] = self.relu(S[i])
+                    if self.batch_norm and self.after_relu:
+                        if return_values:
+                            mean[i] = np.mean(X_layers[i + 1], axis=1, keepdims=True)
+                            var[i] = np.var(X_layers[i + 1], axis=1, keepdims=True)
+                        S_bn[i] = (X_layers[i + 1] - mean[i]) / np.sqrt(var[i] + self.eps)
+                        X_layers[i + 1] = self.gamma[i] * S_bn[i] + self.beta[i]
 
         # Output layer
         P = self.softmax(self.W[k-1]@X_layers[k-1] + self.b[k-1])
@@ -264,18 +272,27 @@ class Classifier():
 
         # hidden layers
         for i in range(k-2, -1, -1):
-            if self.batch_norm:
-                temp_gradGamma[i] = (G*S_bn[i])@np.ones((n,1)) / n
-                temp_gradBeta[i] = G@np.ones((n,1)) / n
-                G = G * (self.gamma[i]@np.ones((1,n)))
-                G = self.batchNorm_backward(G, S[i], mean[i], var[i])
+                if self.batch_norm:
+                    if self.after_relu:
+                        temp_gradGamma[i] = (G*S_bn[i])@np.ones((n,1)) / n
+                        temp_gradBeta[i] = G@np.ones((n,1)) / n
+                        G = G * (self.gamma[i]@np.ones((1,n)))
+                        G = self.batchNorm_backward(G, S[i], mean[i], var[i])
 
-            temp_gradW[i] = G@X_layers[i].T / n + 2 * self.lambda_reg * self.W[i]
-            temp_gradb[i] = G@np.ones((n,1)) / n
+                    temp_gradW[i] = G@X_layers[i].T / n + 2 * self.lambda_reg * self.W[i]
+                    temp_gradb[i] = G@np.ones((n,1)) / n
 
-            if i > 0:
-                G = self.W[i].T@G
-                G = G * (X_layers[i] > 0)
+                    if i > 0:
+                        G = self.W[i].T@G
+                        if not self.after_relu:
+                            G = G * (X_layers[i] > 0)
+                else:
+                    temp_gradW[i] = G@X_layers[i].T / n + 2 * self.lambda_reg * self.W[i]
+                    temp_gradb[i] = G@np.ones((n,1)) / n
+
+                    if i > 0:
+                        G = self.W[i].T@G
+                        G = G * (X_layers[i] > 0)
 
         self.gradW, self.gradb = temp_gradW, temp_gradb
         if self.batch_norm:
@@ -352,6 +369,10 @@ class Classifier():
 
         for epoch in range(num_epochs):
 
+            if self.preciseBN:
+                X_precise = X[:, np.random.choice(N, min(N, self.batch_size*10), replace=False)]
+                _, _, _, _, mean_prec, var_prec = self.evaluateClassifier(X_precise)
+
             for j in range(n_batch):
                 j_start = j * self.batch_size
                 j_end = (j+1) * self.batch_size
@@ -366,11 +387,19 @@ class Classifier():
                 
                 #initialize average mean and var
                 if epoch==0 and j==0 and self.batch_norm:
-                    self.mean_avg = mean
-                    self.var_avg = var
+                    if self.preciseBN:
+                        self.mean_avg = mean_prec
+                        self.var_avg = var_prec
+                    else:
+                        self.mean_avg = mean
+                        self.var_avg = var
                 elif self.batch_norm:
-                    self.mean_avg = [self.momentum * self.mean_avg[i] + (1-self.momentum) * mean[i] for i in range(len(mean))]
-                    self.var_avg = [self.momentum * self.var_avg[i] + (1-self.momentum) * var[i] for i in range(len(var))]
+                    if self.preciseBN:
+                        self.mean_avg = mean_prec
+                        self.var_avg = var_prec
+                    else:
+                        self.mean_avg = [self.momentum * self.mean_avg[i] + (1-self.momentum) * mean[i] for i in range(len(mean))]
+                        self.var_avg = [self.momentum * self.var_avg[i] + (1-self.momentum) * var[i] for i in range(len(var))]
                 else:
                     self.mean_avg = None
                     self.var_avg = None
@@ -597,7 +626,7 @@ if __name__ == '__main__':
     trainSet, validSet, testSet = load_data_more()
 
     params = {
-        'layer_dims': [d, 50, 50, 50, 50, 50, 50, K],
+        'layer_dims': [d, 50, 50, K],
         'lambda_reg': 0.005,
         'batch_size': 100,
         'n_epochs': 20,
@@ -610,6 +639,7 @@ if __name__ == '__main__':
         'init_mode': 'he',
         'batch_norm': True,
         'adam': False,
+        'preciseBN': False,
     }
 
     # check_gradients(trainSet['data'], trainSet['one_hot'], params)
@@ -620,67 +650,70 @@ if __name__ == '__main__':
     # grid search
     # call_grid_search(trainSet['data'], trainSet['one_hot'], validSet, params)
     # exit()
-    # metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
-    # title = '20 epochs, lambda = 0.005, eta = 0.001 and Adam optimizer'
-    # plot_curves(metrics, title)
-    # print("Final test accuracy: %.2f" % test_accuracy(MLP, testSet))
-
-    hinned_units = [50, 100, 250]
-    all_metrics = {}
-    for i in range(len(hinned_units)):
-        params['layer_dims'] = [d, hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], K]
-        MLP = Classifier(**params)
-        metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
-        # print test accuracy for the number of nodes in the hidden layer
-        print("Final test accuracy for %d hidden units: %.2f" % (hinned_units[i], test_accuracy(MLP, testSet)))
-        all_metrics[i] = metrics
-
-    # plot cost, loss and accuracy for each configurations on different colors
-    fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-    fig.tight_layout(pad=3.0)
-
-    ax[0].plot(all_metrics[0]['train_cost'], label='50_train', color='seagreen')
-    ax[0].plot(all_metrics[0]['valid_cost'], label='50_valid', color='seagreen', linestyle='dashed')
-    ax[0].plot(all_metrics[1]['train_cost'], label='100_train', color='indianred')
-    ax[0].plot(all_metrics[1]['valid_cost'], label='100_valid', color='indianred', linestyle='dashed')
-    ax[0].plot(all_metrics[2]['train_cost'], label='250_train', color='darkorange')
-    ax[0].plot(all_metrics[2]['valid_cost'], label='250_valid', color='darkorange', linestyle='dashed')
-    ax[0].set_title('Cost Plot')
-    ax[0].set_xlabel('Epoch')
-    ax[0].set_ylabel('Cost')
-    ax[0].legend()
-    ax[0].grid(True)
-
-
-    ax[1].plot(all_metrics[0]['train_loss'], label='50_train', color='seagreen')
-    ax[1].plot(all_metrics[0]['valid_loss'], label='50_valid', color='seagreen', linestyle='dashed')
-    ax[1].plot(all_metrics[1]['train_loss'], label='100_train', color='indianred')
-    ax[1].plot(all_metrics[1]['valid_loss'], label='100_valid', color='indianred', linestyle='dashed')
-    ax[1].plot(all_metrics[2]['train_loss'], label='250_train', color='darkorange')
-    ax[1].plot(all_metrics[2]['valid_loss'], label='250_valid', color='darkorange', linestyle='dashed')
-    ax[1].set_title('Loss Plot')
-    ax[1].set_xlabel('Epoch')
-    ax[1].set_ylabel('Loss')
-    ax[1].legend()
-    ax[1].grid(True)
-
-    ax[2].plot(all_metrics[0]['train_acc'], label='50_train', color='seagreen')
-    ax[2].plot(all_metrics[0]['valid_acc'], label='50_valid', color='seagreen', linestyle='dashed')
-    ax[2].plot(all_metrics[1]['train_acc'], label='100_train', color='indianred')
-    ax[2].plot(all_metrics[1]['valid_acc'], label='100_valid', color='indianred', linestyle='dashed')
-    ax[2].plot(all_metrics[2]['train_acc'], label='250_train', color='darkorange')
-    ax[2].plot(all_metrics[2]['valid_acc'], label='250_valid', color='darkorange', linestyle='dashed')
-    ax[2].set_title('Accuracy Plot')
-    ax[2].set_xlabel('Epoch')
-    ax[2].set_ylabel('Accuracy')
-    ax[2].legend()
-    ax[2].grid(True)
+    metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
 
     title = '2 cycle with n_s = 2250, lambda = 0.005'
-    plt.suptitle("Learning curves for " + title, y=0.98)
-    plt.subplots_adjust(top=0.85)
-    plt.show()
+    plot_curves(metrics, title)
+    print("Final test accuracy: %.2f" % test_accuracy(MLP, testSet))
+
+
+    # # test different number of nodes in the hidden layer
+    # hinned_units = [50, 100, 250]
+    # all_metrics = {}
+    # for i in range(len(hinned_units)):
+    #     params['layer_dims'] = [d, hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], hinned_units[i], K]
+    #     MLP = Classifier(**params)
+    #     metrics = MLP.fit(trainSet['data'], trainSet['one_hot'], validSet)
+    #     # print test accuracy for the number of nodes in the hidden layer
+    #     print("Final test accuracy for %d hidden units: %.2f" % (hinned_units[i], test_accuracy(MLP, testSet)))
+    #     all_metrics[i] = metrics
+
+    # # plot cost, loss and accuracy for each configurations on different colors
+    # fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+    # fig.tight_layout(pad=3.0)
+
+    # ax[0].plot(all_metrics[0]['train_cost'], label='50_train', color='seagreen')
+    # ax[0].plot(all_metrics[0]['valid_cost'], label='50_valid', color='seagreen', linestyle='dashed')
+    # ax[0].plot(all_metrics[1]['train_cost'], label='100_train', color='indianred')
+    # ax[0].plot(all_metrics[1]['valid_cost'], label='100_valid', color='indianred', linestyle='dashed')
+    # ax[0].plot(all_metrics[2]['train_cost'], label='250_train', color='darkorange')
+    # ax[0].plot(all_metrics[2]['valid_cost'], label='250_valid', color='darkorange', linestyle='dashed')
+    # ax[0].set_title('Cost Plot')
+    # ax[0].set_xlabel('Epoch')
+    # ax[0].set_ylabel('Cost')
+    # ax[0].legend()
+    # ax[0].grid(True)
+
+
+    # ax[1].plot(all_metrics[0]['train_loss'], label='50_train', color='seagreen')
+    # ax[1].plot(all_metrics[0]['valid_loss'], label='50_valid', color='seagreen', linestyle='dashed')
+    # ax[1].plot(all_metrics[1]['train_loss'], label='100_train', color='indianred')
+    # ax[1].plot(all_metrics[1]['valid_loss'], label='100_valid', color='indianred', linestyle='dashed')
+    # ax[1].plot(all_metrics[2]['train_loss'], label='250_train', color='darkorange')
+    # ax[1].plot(all_metrics[2]['valid_loss'], label='250_valid', color='darkorange', linestyle='dashed')
+    # ax[1].set_title('Loss Plot')
+    # ax[1].set_xlabel('Epoch')
+    # ax[1].set_ylabel('Loss')
+    # ax[1].legend()
+    # ax[1].grid(True)
+
+    # ax[2].plot(all_metrics[0]['train_acc'], label='50_train', color='seagreen')
+    # ax[2].plot(all_metrics[0]['valid_acc'], label='50_valid', color='seagreen', linestyle='dashed')
+    # ax[2].plot(all_metrics[1]['train_acc'], label='100_train', color='indianred')
+    # ax[2].plot(all_metrics[1]['valid_acc'], label='100_valid', color='indianred', linestyle='dashed')
+    # ax[2].plot(all_metrics[2]['train_acc'], label='250_train', color='darkorange')
+    # ax[2].plot(all_metrics[2]['valid_acc'], label='250_valid', color='darkorange', linestyle='dashed')
+    # ax[2].set_title('Accuracy Plot')
+    # ax[2].set_xlabel('Epoch')
+    # ax[2].set_ylabel('Accuracy')
+    # ax[2].legend()
+    # ax[2].grid(True)
+
+    # title = '2 cycle with n_s = 2250, lambda = 0.005'
+    # plt.suptitle("Learning curves for " + title, y=0.98)
+    # plt.subplots_adjust(top=0.85)
+    # plt.show()
 
     
 
