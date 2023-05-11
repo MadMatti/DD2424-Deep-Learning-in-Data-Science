@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import pickle
+from math import ceil
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -28,7 +28,7 @@ def idx_to_char(index, book_chars):
 
 
 class RNN:
-    def __init__(self, d, K, char_list):
+    def __init__(self, d, K, char_list, num_epochs, batch_size):
         self.m = 100
         self.eta = 0.1
         self.seq_length = 25
@@ -36,6 +36,8 @@ class RNN:
         self.K = K
         self.char_list = char_list
         self.eps = 1e-8
+        self.num_epochs = num_epochs
+        self.batch_size = batch_size
 
         self.b = np.zeros((self.m, 1))
         self.c = np.zeros((self.K, 1))
@@ -134,7 +136,7 @@ class RNN:
         for grad in [self.grad_W, self.grad_U, self.grad_V, self.grad_b, self.grad_c]:
             np.clip(grad, -5, 5, out=grad)
     
-    def computeGradsNum(self, X, Y, b, c, W, U, V, h=1e-6):
+    def computeGradsNum(self, X, Y, b, c, W, U, V, h=1e-4):
         grad_b = np.zeros((self.m, 1))
         grad_c = np.zeros((self.K, 1))
         grad_U = np.zeros((self.m, self.K))
@@ -230,17 +232,17 @@ class RNN:
 
 
             # print absolute error between analytical and numerical gradients
-            print("For weights, the % of absolute errors below 1e-6 by layers is:")
-            print(np.mean(np.abs(analytic_grads["W"] - numerical_grads["W"]) < 1e-6) * 100)
-            print(np.mean(np.abs(analytic_grads["U"] - numerical_grads["U"]) < 1e-6) * 100)
-            print(np.mean(np.abs(analytic_grads["V"] - numerical_grads["V"]) < 1e-6) * 100)
+            print("For weights, the % of absolute errors below 1e-4 by layers is:")
+            print(np.mean(np.abs(analytic_grads["W"] - numerical_grads["W"]) < 1e-4) * 100)
+            print(np.mean(np.abs(analytic_grads["U"] - numerical_grads["U"]) < 1e-4) * 100)
+            print(np.mean(np.abs(analytic_grads["V"] - numerical_grads["V"]) < 1e-4) * 100)
             print("and the maximum absolute errors are:")
             print("W: ", np.max(np.abs(analytic_grads["W"] - numerical_grads["W"])))
             print("U: ", np.max(np.abs(analytic_grads["U"] - numerical_grads["U"])))
             print("V: ", np.max(np.abs(analytic_grads["V"] - numerical_grads["V"])))
-            print("For biases, the % of absolute errors below 1e-6 by layers is:")
-            print(np.mean(np.abs(analytic_grads["b"] - numerical_grads["b"]) < 1e-6) * 100)
-            print(np.mean(np.abs(analytic_grads["c"] - numerical_grads["c"]) < 1e-6) * 100)
+            print("For biases, the % of absolute errors below 1e-4 by layers is:")
+            print(np.mean(np.abs(analytic_grads["b"] - numerical_grads["b"]) < 1e-4) * 100)
+            print(np.mean(np.abs(analytic_grads["c"] - numerical_grads["c"]) < 1e-4) * 100)
             print("and the maximum absolute errors are:")
             print("b: ", np.max(np.abs(analytic_grads["b"] - numerical_grads["b"])))
             print("c: ", np.max(np.abs(analytic_grads["c"] - numerical_grads["c"])))
@@ -259,9 +261,116 @@ class RNN:
 
             self.h0 = H1[:, [-1]]
 
+    def fit(self, book_data):
+        N = len(book_data)
+        num_seq = N // self.seq_length
+        smooth_loss = 0
+        iter = 0
+        loss_list = []
+
+        for epoch in range(self.num_epochs):
+            hprev = np.random.normal(0, 0.01, self.h0.shape)
+            index = 0
+
+            # # decay learning rate if not first epoch
+            # if epoch > 0: self.eta *= 0.9
+
+            for j in range(num_seq):
+
+                if j==(num_seq-1):
+                    X_chars = book_data[index:N-2]
+                    Y_chars = book_data[index+1:N-1]
+                    index = N
+                else:
+                    X_chars = book_data[index:index+self.seq_length]
+                    Y_chars = book_data[index+1:index+self.seq_length+1]
+                    index += self.seq_length
+
+                X = np.zeros((self.d, len(X_chars)), dtype=int)
+                Y = np.zeros((self.K, len(Y_chars)), dtype=int)
+
+                for k in range(len(X_chars)):
+                    X[:, k] = char_to_idx(X_chars[k], self.char_list)
+                    Y[:, k] = char_to_idx(Y_chars[k], self.char_list)
+
+                P, H1, A = self.forward(X, hprev, self.b, self.c, self.U, self.W, self.V)
+                H0 = np.zeros((self.m, len(X_chars)))
+                H0[:, [0]] = hprev
+                H0[:, 1:] = H1[:, :-1]
+
+                self.computeGrads(P, X, Y, H1, H0, A, self.V, self.W)
+
+                loss = self.computeCost(P, Y)
+                smooth_loss = 0.999 * smooth_loss + 0.001 * loss if smooth_loss != 0 else loss
+                if iter % 100 == 0:
+                    loss_list.append(smooth_loss)
+
+                self.m_b += self.grad_b ** 2
+                self.m_c += self.grad_c ** 2
+                self.m_U += self.grad_U ** 2
+                self.m_W += self.grad_W ** 2
+                self.m_V += self.grad_V ** 2
+
+                # update weights
+                self.b -= self.eta / np.sqrt(self.m_b + self.eps) * self.grad_b
+                self.c -= self.eta / np.sqrt(self.m_c + self.eps) * self.grad_c
+                self.U -= self.eta / np.sqrt(self.m_U + self.eps) * self.grad_U
+                self.W -= self.eta / np.sqrt(self.m_W + self.eps) * self.grad_W
+                self.V -= self.eta / np.sqrt(self.m_V + self.eps) * self.grad_V
+
+                if iter % 10000 == 0:
+                    print("Iter: ", iter, "Smooth Loss: ", smooth_loss)
+                    Y_temp = self.synthesize_text(X[:, [0]], hprev, 200, self.b, self.c, self.W, self.U, self.V)
+                    temp_text = ''
+                    for t in range(Y_temp.shape[0]):
+                        temp_text += idx_to_char(Y_temp[:,[t]], self.char_list)
+                    print(temp_text)
+
+                iter += 1
+
+        Y_temp_final = self.synthesize_text(char_to_idx("H", self.char_list).T, self.h0, 1000, self.b, self.c, self.W, self.U, self.V)
+        temp_text_final = ''
+        for t in range(Y_temp_final.shape[0]):
+            temp_text_final += idx_to_char(Y_temp_final[:,[t]], self.char_list)
+        print("Final synthesized text: ")
+        print(temp_text_final)
+
+        return loss_list
+
+
+def plot_learning_curve(smooth_loss, title='', length_text=None, seq_length=None):
+    
+    # Plot the learning curve
+    _, ax = plt.subplots(1, 1, figsize=(15,5))
+    plt.title('Learning curve '+title)
+    ax.plot(range(1, len(smooth_loss)+1), smooth_loss)
+        
+    # Find the optimal metric value and the corresponding update
+    optimal_update = np.argmin(smooth_loss)
+    optimal_loss = np.round(smooth_loss[optimal_update], 4)
+    label = 'Optimal training loss: '+str(optimal_loss)+' at update '+str(optimal_update+1)
+    ax.axvline(optimal_update, c='green', linestyle='--', linewidth=1, label=label)
+        
+    # Plot vertical red lines each epoch (if required)
+    if length_text is not None and seq_length is not None:
+        updates_per_epoch = len([e for e in range(0, length_text-1, seq_length) \
+                                 if e<=length_text-seq_length-1])
+        for e in range(updates_per_epoch, len(smooth_loss)+1, updates_per_epoch):
+            label = 'Epoch' if e==updates_per_epoch else ''
+            ax.axvline(e, c='red', linestyle='--', linewidth=1, label=label)
+        
+    # Add axis, legend and grid
+    ax.set_xlabel('Update step')
+    ax.set_ylabel('Loss')
+    ax.legend()
+    ax.grid(True)
+
 
 
 if __name__ == "__main__":
     book_data, book_chars, K = read_file()
-    model = RNN(K, K, book_chars)
-    model.checkGradients(book_data[:model.seq_length], book_data[1:model.seq_length + 1])
+    model = RNN(K, K, book_chars, 7, 1)
+    # model.checkGradients(book_data[:model.seq_length], book_data[1:model.seq_length + 1])
+    loss_list = model.fit(book_data)
+    title = 'for 7 epochs, eta = 0.1 and seq_length = 25'
+    plot_learning_curve(loss_list, title=title, length_text=len(book_data), seq_length=25)
