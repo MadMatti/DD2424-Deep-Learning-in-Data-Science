@@ -82,7 +82,7 @@ class RNN:
         for t in range(n):
             p, h, _ = self.forward(x, h, b, c, U, W, V)
             label = np.random.choice(self.K, p=p[:, 0])
-            y[label, t] = 1
+            y[label][t] = 1
             x = np.zeros(x.shape)
             x[label] = 1
 
@@ -302,8 +302,8 @@ class RNN:
 
                 loss = self.computeCost(P, Y)
                 smooth_loss = 0.999 * smooth_loss + 0.001 * loss if smooth_loss != 0 else loss
-                if iter % 100 == 0:
-                    loss_list.append(smooth_loss)
+                # if iter % 100 == 0:
+                loss_list.append(smooth_loss)
 
                 self.m_b += self.grad_b ** 2
                 self.m_c += self.grad_c ** 2
@@ -318,19 +318,22 @@ class RNN:
                 self.W -= self.eta / np.sqrt(self.m_W + self.eps) * self.grad_W
                 self.V -= self.eta / np.sqrt(self.m_V + self.eps) * self.grad_V
 
-                if iter % 10000 == 0:
+                hprev = H1[:, [-1]]
+
+                if iter % 10000 == 0 or iter == 0:
                     print("Iter: ", iter, "Smooth Loss: ", smooth_loss)
                     Y_temp = self.synthesize_text(X[:, [0]], hprev, 200, self.b, self.c, self.W, self.U, self.V)
                     temp_text = ''
-                    for t in range(Y_temp.shape[0]):
+                    for t in range(Y_temp.shape[1]):
                         temp_text += idx_to_char(Y_temp[:,[t]], self.char_list)
                     print(temp_text)
 
                 iter += 1
 
+        # Final synthesized text 1000 characters
         Y_temp_final = self.synthesize_text(char_to_idx("H", self.char_list).T, self.h0, 1000, self.b, self.c, self.W, self.U, self.V)
         temp_text_final = ''
-        for t in range(Y_temp_final.shape[0]):
+        for t in range(Y_temp_final.shape[1]):
             temp_text_final += idx_to_char(Y_temp_final[:,[t]], self.char_list)
         print("Final synthesized text: ")
         print(temp_text_final)
@@ -364,7 +367,7 @@ def plot_learning_curve(smooth_loss, title='', length_text=None, seq_length=None
     ax.set_ylabel('Loss')
     ax.legend()
     ax.grid(True)
-
+    plt.show()
 
 
 if __name__ == "__main__":
