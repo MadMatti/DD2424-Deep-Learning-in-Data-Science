@@ -28,7 +28,7 @@ def idx_to_char(index, book_chars):
 
 
 class RNN:
-    def __init__(self, d, K, char_list, num_epochs, batch_size):
+    def __init__(self, d, K, char_list, num_epochs, batch_size, adam):
         self.m = 100
         self.eta = 0.1
         self.seq_length = 25
@@ -38,6 +38,16 @@ class RNN:
         self.eps = 1e-8
         self.num_epochs = num_epochs
         self.batch_size = batch_size
+        self.adam = adam
+
+        if self.adam:
+            self.beta1 = 0.9
+            self.beta2 = 0.999
+            self.m_b = np.zeros((self.m, 1))
+            self.m_c = np.zeros((self.K, 1))
+            self.m_U = np.zeros((self.m, self.K))
+            self.m_W = np.zeros((self.m, self.m))
+            self.m_V = np.zeros((self.K, self.m))
 
         self.b = np.zeros((self.m, 1))
         self.c = np.zeros((self.K, 1))
@@ -57,7 +67,7 @@ class RNN:
         self.m_W = np.zeros((self.m, self.m))
         self.m_V = np.zeros((self.K, self.m))
 
-        self.h0 = np.zeros((self.m, 1))
+        self.h0 = np.zeros((self.m, 1))            
 
         self.initilization()
 
@@ -70,6 +80,19 @@ class RNN:
         self.U = np.random.normal(mu, sigma, self.U.shape)
         self.W = np.random.normal(mu, sigma, self.W.shape)
         self.V = np.random.normal(mu, sigma, self.V.shape)
+
+        if self.adam:
+            if self.adam:
+                self.m_b = np.zeros((self.m, 1))
+                self.m_c = np.zeros((self.K, 1))
+                self.m_U = np.zeros((self.m, self.K))
+                self.m_W = np.zeros((self.m, self.m))
+                self.m_V = np.zeros((self.K, self.m))
+                self.v_b = np.zeros((self.m, 1))
+                self.v_c = np.zeros((self.K, 1))
+                self.v_U = np.zeros((self.m, self.K))
+                self.v_W = np.zeros((self.m, self.m))
+                self.v_V = np.zeros((self.K, self.m))
 
     def softmax(self, x):
         return np.exp(x) / np.sum(np.exp(x), axis=0)
@@ -305,18 +328,50 @@ class RNN:
                 # if iter % 100 == 0:
                 loss_list.append(smooth_loss)
 
-                self.m_b += self.grad_b ** 2
-                self.m_c += self.grad_c ** 2
-                self.m_U += self.grad_U ** 2
-                self.m_W += self.grad_W ** 2
-                self.m_V += self.grad_V ** 2
+                if self.adam:
+                    self.m_b = self.beta1 * self.m_b + (1 - self.beta1) * self.grad_b
+                    self.m_c = self.beta1 * self.m_c + (1 - self.beta1) * self.grad_c
+                    self.m_U = self.beta1 * self.m_U + (1 - self.beta1) * self.grad_U
+                    self.m_W = self.beta1 * self.m_W + (1 - self.beta1) * self.grad_W
+                    self.m_V = self.beta1 * self.m_V + (1 - self.beta1) * self.grad_V
 
-                # update weights
-                self.b -= self.eta / np.sqrt(self.m_b + self.eps) * self.grad_b
-                self.c -= self.eta / np.sqrt(self.m_c + self.eps) * self.grad_c
-                self.U -= self.eta / np.sqrt(self.m_U + self.eps) * self.grad_U
-                self.W -= self.eta / np.sqrt(self.m_W + self.eps) * self.grad_W
-                self.V -= self.eta / np.sqrt(self.m_V + self.eps) * self.grad_V
+                    self.v_b = self.beta2 * self.v_b + (1 - self.beta2) * self.grad_b ** 2
+                    self.v_c = self.beta2 * self.v_c + (1 - self.beta2) * self.grad_c ** 2
+                    self.v_U = self.beta2 * self.v_U + (1 - self.beta2) * self.grad_U ** 2
+                    self.v_W = self.beta2 * self.v_W + (1 - self.beta2) * self.grad_W ** 2
+                    self.v_V = self.beta2 * self.v_V + (1 - self.beta2) * self.grad_V ** 2
+
+                    m_b_hat = self.m_b / (1 - self.beta1 ** (iter + 1))
+                    m_c_hat = self.m_c / (1 - self.beta1 ** (iter + 1))
+                    m_U_hat = self.m_U / (1 - self.beta1 ** (iter + 1))
+                    m_W_hat = self.m_W / (1 - self.beta1 ** (iter + 1))
+                    m_V_hat = self.m_V / (1 - self.beta1 ** (iter + 1))
+
+                    v_b_hat = self.v_b / (1 - self.beta2 ** (iter + 1))
+                    v_c_hat = self.v_c / (1 - self.beta2 ** (iter + 1))
+                    v_U_hat = self.v_U / (1 - self.beta2 ** (iter + 1))
+                    v_W_hat = self.v_W / (1 - self.beta2 ** (iter + 1))
+                    v_V_hat = self.v_V / (1 - self.beta2 ** (iter + 1))
+
+                    self.b -= self.eta * m_b_hat / (np.sqrt(v_b_hat) + self.eps)
+                    self.c -= self.eta * m_c_hat / (np.sqrt(v_c_hat) + self.eps)
+                    self.U -= self.eta * m_U_hat / (np.sqrt(v_U_hat) + self.eps)
+                    self.W -= self.eta * m_W_hat / (np.sqrt(v_W_hat) + self.eps)
+                    self.V -= self.eta * m_V_hat / (np.sqrt(v_V_hat) + self.eps)
+
+                else:
+                    self.m_b += self.grad_b ** 2
+                    self.m_c += self.grad_c ** 2
+                    self.m_U += self.grad_U ** 2
+                    self.m_W += self.grad_W ** 2
+                    self.m_V += self.grad_V ** 2
+
+                    # update weights
+                    self.b -= self.eta / np.sqrt(self.m_b + self.eps) * self.grad_b
+                    self.c -= self.eta / np.sqrt(self.m_c + self.eps) * self.grad_c
+                    self.U -= self.eta / np.sqrt(self.m_U + self.eps) * self.grad_U
+                    self.W -= self.eta / np.sqrt(self.m_W + self.eps) * self.grad_W
+                    self.V -= self.eta / np.sqrt(self.m_V + self.eps) * self.grad_V
 
                 hprev = H1[:, [-1]]
 
@@ -342,7 +397,6 @@ class RNN:
 
 
 def plot_learning_curve(smooth_loss, title='', length_text=None, seq_length=None):
-    
     # Plot the learning curve
     _, ax = plt.subplots(1, 1, figsize=(15,5))
     plt.title('Learning curve '+title)
@@ -372,8 +426,8 @@ def plot_learning_curve(smooth_loss, title='', length_text=None, seq_length=None
 
 if __name__ == "__main__":
     book_data, book_chars, K = read_file()
-    model = RNN(K, K, book_chars, 7, 1)
+    model = RNN(K, K, book_chars, 2, 1, adam=False)
     # model.checkGradients(book_data[:model.seq_length], book_data[1:model.seq_length + 1])
     loss_list = model.fit(book_data)
-    title = 'for 7 epochs, eta = 0.1 and seq_length = 25'
+    title = 'for 2 epochs, eta = 0.1 and seq_length = 25'
     plot_learning_curve(loss_list, title=title, length_text=len(book_data), seq_length=25)
