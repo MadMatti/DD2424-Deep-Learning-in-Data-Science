@@ -422,11 +422,11 @@ def plot_learning_curve(smooth_loss, title='', length_text=None, seq_length=None
     ax.legend()
     ax.grid(True)
     plt.show()
-
+    
 
 if __name__ == "__main__":
     book_data, book_chars, K = read_file()
-    model = RNN(K, K, book_chars, 2, 1, adam=False)
+    model = RNN(K, K, book_chars, 2, 10, adam=False)
     # model.checkGradients(book_data[:model.seq_length], book_data[1:model.seq_length + 1])
     loss_list = model.fit(book_data)
     title = 'for 2 epochs, eta = 0.1 and seq_length = 25'
